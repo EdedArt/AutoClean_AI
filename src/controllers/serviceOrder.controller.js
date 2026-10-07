@@ -1,5 +1,7 @@
 const prisma = require('../config/db');
 
+const VALID_PHASES = ['RECIBIDO', 'LAVADO', 'SECADO', 'LISTO'];
+
 /**
  * Fetch all service orders with nested vehicle, package, and bay data
  */
@@ -80,7 +82,46 @@ const createServiceOrder = async (req, res, next) => {
   }
 };
 
+/**
+ * Update the service phase of an order
+ */
+const updateServicePhase = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { faseActual } = req.body;
+
+    const orderId = parseInt(id, 10);
+    if (isNaN(orderId)) {
+      return res.status(400).json({ error: 'Invalid order ID' });
+    }
+
+    if (!faseActual || !VALID_PHASES.includes(faseActual)) {
+      return res.status(400).json({
+        error: `Invalid faseActual. Must be one of: ${VALID_PHASES.join(', ')}`,
+      });
+    }
+
+    const updatedOrder = await prisma.serviceOrder.update({
+      where: { id: orderId },
+      data: { faseActual },
+      include: {
+        vehicle: true,
+        package: true,
+        bay: true,
+      },
+    });
+
+    res.status(200).json(updatedOrder);
+  } catch (error) {
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: 'Service order not found' });
+    }
+    next(error);
+  }
+};
+
 module.exports = {
   getServiceOrders,
   createServiceOrder,
+  updateServicePhase,
 };
