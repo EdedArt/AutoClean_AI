@@ -132,8 +132,48 @@ const updateServicePhase = async (req, res, next) => {
   }
 };
 
+/**
+ * Track the latest service order for a given vehicle plate (placa)
+ */
+const trackOrderByPlaca = async (req, res, next) => {
+  try {
+    const { placa } = req.params;
+
+    if (!placa || !placa.trim()) {
+      return res.status(400).json({ error: 'Parámetro "placa" es requerido' });
+    }
+
+    const order = await prisma.serviceOrder.findFirst({
+      where: {
+        vehicle: {
+          placa: placa.trim(),
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+      include: {
+        vehicle: true,
+        package: true,
+        bay: true,
+      },
+    });
+
+    if (!order) {
+      return res.status(404).json({
+        error: 'No se encontraron órdenes activas para esta placa',
+      });
+    }
+
+    res.status(200).json(order);
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getServiceOrders,
   createServiceOrder,
   updateServicePhase,
+  trackOrderByPlaca,
 };
