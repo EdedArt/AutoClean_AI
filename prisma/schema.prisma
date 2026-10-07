@@ -1,0 +1,49 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Vehicle {
+  id            Int            @id @default(autoincrement())
+  placa         String         @unique
+  marca         String
+  modelo        String
+  nivelSuciedad String
+  createdAt     DateTime       @default(now())
+  serviceOrders ServiceOrder[]
+}
+
+model Bay {
+  id            Int            @id @default(autoincrement())
+  numero        Int            @unique
+  ocupada       Boolean        @default(false)
+  serviceOrders ServiceOrder[]
+}
+
+model Package {
+  id            Int            @id @default(autoincrement())
+  nombre        String
+  descripcion   String
+  precio        Float?
+  serviceOrders ServiceOrder[]
+}
+
+// ServicePhase: RECIBIDO | LAVADO | SECADO | LISTO
+model ServiceOrder {
+  id                  Int          @id @default(autoincrement())
+  vehicleId           Int
+  vehicle             Vehicle      @relation(fields: [vehicleId], references: [id])
+  packageId           Int?
+  package             Package?     @relation(fields: [packageId], references: [id])
+  bayId               Int?
+  bay                 Bay?         @relation(fields: [bayId], references: [id])
+  faseActual          String       @default("RECIBIDO")
+  porcentajeProgreso  Int          @default(0)
+  horaEstimadaEntrega DateTime?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+}
