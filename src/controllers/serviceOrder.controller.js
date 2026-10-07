@@ -2,6 +2,13 @@ const prisma = require('../config/db');
 
 const VALID_PHASES = ['RECIBIDO', 'LAVADO', 'SECADO', 'LISTO'];
 
+const phaseProgressMap = {
+  RECIBIDO: 10,
+  LAVADO: 45,
+  SECADO: 80,
+  LISTO: 100,
+};
+
 /**
  * Fetch all service orders with nested vehicle, package, and bay data
  */
@@ -83,7 +90,7 @@ const createServiceOrder = async (req, res, next) => {
 };
 
 /**
- * Update the service phase of an order
+ * Update the service phase of an order and automatically calculate progress percentage
  */
 const updateServicePhase = async (req, res, next) => {
   try {
@@ -101,9 +108,14 @@ const updateServicePhase = async (req, res, next) => {
       });
     }
 
+    const porcentajeProgreso = phaseProgressMap[faseActual];
+
     const updatedOrder = await prisma.serviceOrder.update({
       where: { id: orderId },
-      data: { faseActual },
+      data: {
+        faseActual,
+        porcentajeProgreso,
+      },
       include: {
         vehicle: true,
         package: true,
