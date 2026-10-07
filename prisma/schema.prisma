@@ -46,4 +46,14 @@ model ServiceOrder {
   horaEstimadaEntrega DateTime?
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
+  evidences           Evidence[]
+}
+
+model Evidence {
+  id             Int          @id @default(autoincrement())
+  url            String
+  etapa          String
+  serviceOrderId Int
+  serviceOrder   ServiceOrder @relation(fields: [serviceOrderId], references: [id])
+  createdAt      DateTime     @default(now())
 }

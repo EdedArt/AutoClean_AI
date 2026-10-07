@@ -6,6 +6,7 @@ async function main() {
   console.log('🌱 Starting database seeding...');
 
   // 1. Clear existing data in relational order to prevent FK constraints issues
+  await prisma.evidence.deleteMany();
   await prisma.serviceOrder.deleteMany();
   await prisma.vehicle.deleteMany();
   await prisma.package.deleteMany();
