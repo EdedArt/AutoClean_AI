@@ -6,6 +6,7 @@ const healthRoutes = require('./src/routes/health.routes');
 const vehicleRoutes = require('./src/routes/vehicle.routes');
 const bayRoutes = require('./src/routes/bay.routes');
 const packageRoutes = require('./src/routes/package.routes');
+const serviceOrderRoutes = require('./src/routes/serviceOrder.routes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -20,6 +21,7 @@ app.use('/api/health', healthRoutes);
 app.use('/api/vehicles', vehicleRoutes);
 app.use('/api/bays', bayRoutes);
 app.use('/api/packages', packageRoutes);
+app.use('/api/orders', serviceOrderRoutes);
 
 // Centralized error handling middleware
 app.use((err, req, res, next) => {
