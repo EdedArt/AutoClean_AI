@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const healthRoutes = require('./src/routes/health.routes');
+const vehicleRoutes = require('./src/routes/vehicle.routes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -14,6 +15,7 @@ app.use(morgan('dev'));
 
 // Routes
 app.use('/api/health', healthRoutes);
+app.use('/api/vehicles', vehicleRoutes);
 
 // Centralized error handling middleware
 app.use((err, req, res, next) => {
