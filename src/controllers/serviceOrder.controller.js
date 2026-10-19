@@ -276,6 +276,51 @@ const simulateResetOrder = async (req, res, next) => {
   }
 };
 
+/**
+ * Demo Control: Force order directly to LISTO (100%)
+ */
+const simulateCompleteOrder = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const orderId = parseInt(id, 10);
+
+    if (isNaN(orderId)) {
+      return res.status(400).json({ error: 'Invalid order ID' });
+    }
+
+    const order = await prisma.serviceOrder.findUnique({
+      where: { id: orderId },
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: 'Service order not found' });
+    }
+
+    const updatedOrder = await prisma.serviceOrder.update({
+      where: { id: orderId },
+      data: {
+        faseActual: 'LISTO',
+        porcentajeProgreso: 100,
+        updatedAt: new Date(),
+      },
+      include: {
+        vehicle: true,
+        package: true,
+        bay: true,
+      },
+    });
+
+    console.log(`[DEMO] Order #${orderId} force-completed`);
+
+    res.status(200).json(updatedOrder);
+  } catch (error) {
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: 'Service order not found' });
+    }
+    next(error);
+  }
+};
+
 module.exports = {
   getServiceOrders,
   createServiceOrder,
@@ -283,4 +328,5 @@ module.exports = {
   trackOrderByPlaca,
   simulateAdvanceOrder,
   simulateResetOrder,
+  simulateCompleteOrder,
 };
