@@ -231,10 +231,56 @@ const simulateAdvanceOrder = async (req, res, next) => {
   }
 };
 
+/**
+ * Demo Control: Reset an order back to RECIBIDO (10%) and restart simulation timer
+ */
+const simulateResetOrder = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const orderId = parseInt(id, 10);
+
+    if (isNaN(orderId)) {
+      return res.status(400).json({ error: 'Invalid order ID' });
+    }
+
+    const order = await prisma.serviceOrder.findUnique({
+      where: { id: orderId },
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: 'Service order not found' });
+    }
+
+    const updatedOrder = await prisma.serviceOrder.update({
+      where: { id: orderId },
+      data: {
+        faseActual: 'RECIBIDO',
+        porcentajeProgreso: 10,
+        updatedAt: new Date(),
+      },
+      include: {
+        vehicle: true,
+        package: true,
+        bay: true,
+      },
+    });
+
+    console.log(`[DEMO] Order #${orderId} reset to RECIBIDO`);
+
+    res.status(200).json(updatedOrder);
+  } catch (error) {
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: 'Service order not found' });
+    }
+    next(error);
+  }
+};
+
 module.exports = {
   getServiceOrders,
   createServiceOrder,
   updateServicePhase,
   trackOrderByPlaca,
   simulateAdvanceOrder,
+  simulateResetOrder,
 };

@@ -5,6 +5,7 @@ const {
   updateServicePhase,
   trackOrderByPlaca,
   simulateAdvanceOrder,
+  simulateResetOrder,
 } = require('../controllers/serviceOrder.controller');
 
 const router = Router();
@@ -16,5 +17,6 @@ router.patch('/:id/phase', updateServicePhase);
 
 // Demo control routes
 router.post('/:id/simulate/advance', simulateAdvanceOrder);
+router.post('/:id/simulate/reset', simulateResetOrder);
 
 module.exports = router;
