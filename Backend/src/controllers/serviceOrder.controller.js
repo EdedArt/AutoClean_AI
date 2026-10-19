@@ -201,7 +201,12 @@ const trackOrderByPlaca = async (req, res, next) => {
       });
     }
 
-    res.status(200).json(order);
+    const prediction = calculateDeliveryPrediction(order);
+
+    res.status(200).json({
+      ...order,
+      prediction,
+    });
   } catch (error) {
     next(error);
   }
