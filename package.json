@@ -15,7 +15,8 @@
     "express": "^4.21.1",
     "morgan": "^1.10.0",
     "multer": "^2.4.0",
-    "prisma": "^5.22.0"
+    "prisma": "^5.22.0",
+    "zod": "^4.6.7"
   },
   "prisma": {
     "seed": "node prisma/seed.js"
