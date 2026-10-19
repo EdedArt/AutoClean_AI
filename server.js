@@ -11,6 +11,7 @@ const bayRoutes = require('./src/routes/bay.routes');
 const packageRoutes = require('./src/routes/package.routes');
 const serviceOrderRoutes = require('./src/routes/serviceOrder.routes');
 const evidenceRoutes = require('./src/routes/evidence.routes');
+const { notFoundHandler, errorHandler } = require('./src/middlewares/error.middleware');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -32,13 +33,9 @@ app.use('/api/packages', packageRoutes);
 app.use('/api/orders', serviceOrderRoutes);
 app.use('/api/orders', evidenceRoutes);
 
-// Centralized error handling middleware
-app.use((err, req, res, next) => {
-  console.error(err.message || err);
-  res.status(err.status || 500).json({
-    error: err.message || 'Internal Server Error',
-  });
-});
+// Centralized 404 and error handling middlewares
+app.use(notFoundHandler);
+app.use(errorHandler);
 
 // Background simulation scheduler: runs every ~10s and advances active orders
 const simulationInterval = setInterval(async () => {
@@ -55,9 +52,19 @@ const simulationInterval = setInterval(async () => {
       await advanceOrderPhase(order);
     }
   } catch (error) {
-    console.error('[SIMULATION] Error in scheduler tick:', error.message || error);
+    console.error('[SIMULATION] error:', error.message || error);
   }
 }, SIMULATION_INTERVAL_MS);
+
+// Process-level error handling
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught Exception thrown:', err);
+  process.exit(1);
+});
 
 const server = app.listen(PORT, () => {
   console.log(`AutoClean AI backend running on http://localhost:${PORT}`);

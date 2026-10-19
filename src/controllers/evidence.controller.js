@@ -1,31 +1,35 @@
 const fs = require('fs');
 const prisma = require('../config/db');
+const AppError = require('../utils/AppError');
+const asyncHandler = require('../utils/asyncHandler');
 
 /**
  * Upload photo evidence for a service order
  */
-const uploadEvidence = async (req, res, next) => {
-  try {
-    const { orderId } = req.params;
+const uploadEvidence = asyncHandler(async (req, res) => {
+  const { orderId } = req.params;
 
-    if (!req.file) {
-      return res.status(400).json({ error: 'No se ha proporcionado ningún archivo de imagen' });
-    }
+  if (!req.file) {
+    throw AppError.badRequest('No se ha proporcionado ningún archivo de imagen', 'FILE_MISSING');
+  }
 
-    const order = await prisma.serviceOrder.findUnique({
-      where: { id: orderId },
-    });
+  const order = await prisma.serviceOrder.findUnique({
+    where: { id: orderId },
+  });
 
-    if (!order) {
-      if (req.file && fs.existsSync(req.file.path)) {
+  if (!order) {
+    if (req.file && fs.existsSync(req.file.path)) {
+      try {
         fs.unlinkSync(req.file.path);
-      }
-      return res.status(404).json({ error: 'Service order not found' });
+      } catch (_) {}
     }
+    throw AppError.notFound('Service order not found');
+  }
 
-    const etapa = req.body.etapa || order.faseActual || 'RECIBIDO';
-    const relativeUrl = `/evidence/${req.file.filename}`;
+  const etapa = req.body.etapa || order.faseActual || 'RECIBIDO';
+  const relativeUrl = `/evidence/${req.file.filename}`;
 
+  try {
     const evidence = await prisma.evidence.create({
       data: {
         url: relativeUrl,
@@ -41,35 +45,31 @@ const uploadEvidence = async (req, res, next) => {
         fs.unlinkSync(req.file.path);
       } catch (_) {}
     }
-    next(error);
+    throw error;
   }
-};
+});
 
 /**
  * Fetch all evidences for a specific service order
  */
-const getEvidencesByOrder = async (req, res, next) => {
-  try {
-    const { orderId } = req.params;
+const getEvidencesByOrder = asyncHandler(async (req, res) => {
+  const { orderId } = req.params;
 
-    const order = await prisma.serviceOrder.findUnique({
-      where: { id: orderId },
-    });
+  const order = await prisma.serviceOrder.findUnique({
+    where: { id: orderId },
+  });
 
-    if (!order) {
-      return res.status(404).json({ error: 'Service order not found' });
-    }
-
-    const evidences = await prisma.evidence.findMany({
-      where: { serviceOrderId: orderId },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    res.status(200).json(evidences);
-  } catch (error) {
-    next(error);
+  if (!order) {
+    throw AppError.notFound('Service order not found');
   }
-};
+
+  const evidences = await prisma.evidence.findMany({
+    where: { serviceOrderId: orderId },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  res.status(200).json(evidences);
+});
 
 module.exports = {
   uploadEvidence,
