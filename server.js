@@ -52,9 +52,19 @@ const simulationInterval = setInterval(async () => {
       await advanceOrderPhase(order);
     }
   } catch (error) {
-    console.error('[SIMULATION] Error in scheduler tick:', error.message || error);
+    console.error('[SIMULATION] error:', error.message || error);
   }
 }, SIMULATION_INTERVAL_MS);
+
+// Process-level error handling
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught Exception thrown:', err);
+  process.exit(1);
+});
 
 const server = app.listen(PORT, () => {
   console.log(`AutoClean AI backend running on http://localhost:${PORT}`);
