@@ -72,11 +72,19 @@ const calculateDeliveryPrediction = (order, options = {}) => {
   const estimatedDeliveryTime = new Date(now + remainingTimeMs);
   const accuracyPercentage = getDeterministicAccuracy(order.id);
 
+  // Delay detection: check if time elapsed in current phase exceeds phase duration
+  const lastChangeTime = new Date(order.updatedAt || order.createdAt || now).getTime();
+  const elapsed = now - lastChangeTime;
+  const isDelayed = !isNaN(lastChangeTime) && elapsed > phaseDurationMs;
+
+  const recalculated = isDelayed;
+  const message = isDelayed ? 'Tiempo recalculado por posible retraso' : null;
+
   return {
     estimatedDeliveryTime,
     accuracyPercentage,
-    recalculated: false,
-    message: null,
+    recalculated,
+    message,
   };
 };
 
