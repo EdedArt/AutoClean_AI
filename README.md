@@ -2,18 +2,17 @@
 
 Backend REST API for **AutoClean AI** (Node.js + Express + Prisma + SQLite).
 
-## Input Validation with Zod (Phase 14)
+## Centralized Error Handling (Phase 15)
 
-All request inputs (body and route parameters) are validated using schemas built with **Zod** via the centralized `validate(schema, source)` middleware.
+The API enforces a single, uniform JSON error format across all endpoints (validation, business conflicts, not found, upload errors, unhandled exceptions, and unknown routes) to provide predictable error parsing for mobile clients (Android & iOS).
 
-### Unified Validation Error Response (400 Bad Request)
-
-When any input fails schema validation, the API returns a structured `400 Bad Request` with the following unified JSON shape:
+### Unified Error Format
 
 ```json
 {
   "error": {
-    "message": "Validation failed",
+    "code": "STRING_CODE",
+    "message": "Human-readable error description",
     "details": [
       {
         "field": "placa",
@@ -23,6 +22,36 @@ When any input fails schema validation, the API returns a structured `400 Bad Re
   }
 }
 ```
+> Note: The `details` array is included only when field-specific information is available (such as schema validation errors).
+
+### Error Codes Reference
+
+| Error Code | HTTP Status | Description / Trigger Scenario |
+|---|---|---|
+| `ROUTE_NOT_FOUND` | `404 Not Found` | Request sent to an unregistered route or HTTP method |
+| `NOT_FOUND` | `404 Not Found` | Requested vehicle, service order, bay, or package was not found |
+| `VALIDATION_ERROR` | `400 Bad Request` | Zod schema validation failed on body, params, or query |
+| `INVALID_JSON` | `400 Bad Request` | Malformed JSON payload sent in request body |
+| `INVALID_REFERENCE` | `400 Bad Request` | Prisma foreign key reference failure |
+| `ORDER_COMPLETED` | `400 Bad Request` | Attempted to force-advance an order that is already completed (`LISTO`) |
+| `FILE_MISSING` | `400 Bad Request` | Evidence upload endpoint called without an image file |
+| `INVALID_FILE_TYPE` | `400 Bad Request` | Uploaded file is not JPEG, PNG, or WEBP |
+| `FILE_TOO_LARGE` | `413 Payload Too Large` | Uploaded file exceeds the 5 MB maximum size limit |
+| `DUPLICATE_RESOURCE` | `409 Conflict` | Unique constraint violation (e.g. vehicle plate already exists) |
+| `BAY_OCCUPIED` | `409 Conflict` | Attempted to create a service order on an already occupied bay |
+| `INTERNAL_ERROR` | `500 Internal Server Error` | Unexpected unhandled server exception |
+
+### Production vs Development Behavior
+* **Production (`NODE_ENV=production`):** Internal error details and stack traces are strictly suppressed to prevent security leaks. Unhandled exceptions return generic `Internal Server Error`.
+* **Development:** The complete error stack trace is returned in an adjacent `stack` field for rapid debugging.
+* **Console Logging:** All errors are logged to `console.error` with full stack traces regardless of environment.
+* **Process Resilience:** Process-level listeners (`unhandledRejection` and `uncaughtException`) protect the Node process from silent failure, and simulation scheduler loops are wrapped in safe error catchers.
+
+---
+
+## Input Validation with Zod (Phase 14)
+
+All request inputs (body and route parameters) are validated using schemas built with **Zod** via the centralized `validate(schema, source)` middleware, throwing `AppError` mapped to `VALIDATION_ERROR`.
 
 ### Schema Rules & Normalization
 
@@ -35,11 +64,11 @@ When any input fails schema validation, the API returns a structured `400 Bad Re
 2. **Service Orders (`POST /api/orders`, `PATCH /api/orders/:id/phase`):**
    * `vehicleId`: Required positive integer (coerced).
    * `packageId`: Optional positive integer (coerced).
-   * `bayId`: Optional positive integer (coerced). If the designated bay is already marked occupied (`ocupada: true`), returns `409 Conflict` with `{"error": "Bay is already occupied"}`.
+   * `bayId`: Optional positive integer (coerced). If the designated bay is already occupied (`ocupada: true`), returns `409 Conflict` with code `"BAY_OCCUPIED"`.
    * `faseActual`: Validated against canonical phases: `"RECIBIDO" | "LAVADO" | "SECADO" | "LISTO"`.
 
 3. **Common Route Parameters:**
-   * `:id` / `:orderId`: Coerced positive integers. Non-numeric or negative values return `400 Bad Request`.
+   * `:id` / `:orderId`: Coerced positive integers. Non-numeric or negative values return `400 Bad Request` with code `"VALIDATION_ERROR"`.
    * `:placa`: Validated against `XXX-123` pattern and normalized to uppercase.
 
 4. **Evidence Uploads (`POST /api/orders/:orderId/evidence`):**
@@ -58,8 +87,8 @@ Advances an active order to its next phase (`RECIBIDO -> LAVADO -> SECADO -> LIS
 
 * **Endpoint:** `POST /api/orders/:id/simulate/advance`
 * **Response (Success):** `200 OK` with updated order object.
-* **Response (Already Finished):** `400 Bad Request` with `{"error": "Order is already completed."}`.
-* **Response (Not Found):** `404 Not Found` with `{"error": "Service order not found"}`.
+* **Response (Already Finished):** `400 Bad Request` with `{"error": {"code": "ORDER_COMPLETED", "message": "Order is already completed."}}`.
+* **Response (Not Found):** `404 Not Found` with `{"error": {"code": "NOT_FOUND", "message": "Service order not found"}}`.
 * **Console Log:** `[DEMO] Order #<id> force-advanced <currentPhase> -> <nextPhase>`
 
 **Example cURL:**
@@ -102,6 +131,7 @@ curl -X POST http://localhost:3000/api/orders/1/simulate/complete
 The backend includes a background scheduler (`setInterval` every ~10s) that automatically advances active orders based on elapsed time:
 * **Configuration:** `SIMULATION_PHASE_DURATION_MS` in `.env` (default: `60000` = 1 minute per phase).
 * Any manual update (via standard `PATCH /api/orders/:id/phase` or demo control endpoints) updates `updatedAt`, resetting the timer so that the background scheduler never immediately overrides demo actions.
+* **Error Resilience:** The scheduler callback runs within a guarded `try/catch` block, logging `[SIMULATION] error:` to prevent background timer crashes.
 
 ---
 
@@ -140,8 +170,8 @@ Fetches delivery prediction metrics for a specific order.
     "message": null
   }
   ```
-* **Response (Not Found):** `404 Not Found` with `{"error": "Service order not found"}`.
-* **Response (Invalid ID):** `400 Bad Request` with unified validation error format.
+* **Response (Not Found):** `404 Not Found` with unified format code `"NOT_FOUND"`.
+* **Response (Invalid ID):** `400 Bad Request` with unified format code `"VALIDATION_ERROR"`.
 
 **Example cURL:**
 ```bash
@@ -189,7 +219,7 @@ curl http://localhost:3000/api/orders/track/ABC-123
 
 ## Running Tests
 
-Execute the complete test suite (simulation, integration, demo controls, prediction, and validation):
+Execute the complete test suite (simulation, integration, demo controls, prediction, validation, and error handling):
 ```bash
 npm test
 ```
