@@ -46,14 +46,14 @@ function makeRequest(method, path, body = null) {
 async function runDemoControlTests() {
   console.log('🧪 Starting Demo Control Endpoints Test Suite...\n');
 
-  const testPlaca = `DEMO-${Date.now().toString().slice(-4)}`;
+  const testPlaca = `DEM-${Math.floor(100 + Math.random() * 900)}`;
 
   // 1. Setup vehicle and order
   const vRes = await makeRequest('POST', '/api/vehicles', {
     placa: testPlaca,
     marca: 'DemoMaker',
     modelo: 'DemoModel',
-    nivelSuciedad: 'Alto',
+    nivelSuciedad: 'Severo',
   });
   assert.strictEqual(vRes.status, 201);
   const vehicle = vRes.body;
@@ -156,7 +156,8 @@ async function runDemoControlTests() {
     console.log('\n9. Testing 400 for invalid ID format...');
     const invalidId = await makeRequest('POST', '/api/orders/abc/simulate/advance');
     assert.strictEqual(invalidId.status, 400);
-    assert.strictEqual(invalidId.body.error, 'Invalid order ID');
+    assert.strictEqual(invalidId.body.error.message, 'Validation failed');
+    assert.strictEqual(invalidId.body.error.details[0].field, 'id');
     console.log('  ✅ Returns 400 for non-integer order ID.');
 
     console.log('\n🎉 All Demo Control Endpoints tests passed successfully!');
