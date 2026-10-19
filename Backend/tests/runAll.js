@@ -9,6 +9,7 @@ const tests = [
   path.join(__dirname, 'simulation.test.js'),
   path.join(__dirname, 'integration.test.js'),
   path.join(__dirname, 'demoControls.test.js'),
+  path.join(__dirname, 'prediction.test.js'),
 ];
 
 for (const testFile of tests) {

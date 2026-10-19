@@ -4,6 +4,7 @@ const {
   createServiceOrder,
   updateServicePhase,
   trackOrderByPlaca,
+  getOrderPrediction,
   simulateAdvanceOrder,
   simulateResetOrder,
   simulateCompleteOrder,
@@ -13,6 +14,7 @@ const router = Router();
 
 router.get('/', getServiceOrders);
 router.get('/track/:placa', trackOrderByPlaca);
+router.get('/:id/prediction', getOrderPrediction);
 router.post('/', createServiceOrder);
 router.patch('/:id/phase', updateServicePhase);
 
