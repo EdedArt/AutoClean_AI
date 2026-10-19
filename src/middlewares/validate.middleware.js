@@ -1,4 +1,5 @@
 const fs = require('fs');
+const AppError = require('../utils/AppError');
 
 /**
  * Removes any temporary files uploaded via Multer if validation fails
@@ -52,12 +53,7 @@ const validate = (schema, source = 'body') => {
         message: issue.message,
       }));
 
-      return res.status(400).json({
-        error: {
-          message: 'Validation failed',
-          details,
-        },
-      });
+      return next(new AppError('Validation failed', 400, 'VALIDATION_ERROR', details));
     }
 
     req[source] = result.data;
