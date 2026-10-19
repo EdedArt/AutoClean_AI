@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node --watch server.js",
     "start": "node server.js",
-    "test": "node tests/simulation.test.js"
+    "test": "node tests/runAll.js"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
