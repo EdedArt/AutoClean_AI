@@ -69,6 +69,7 @@ const shouldAdvancePhase = (order, now, durationMs) => {
 
 /**
  * Advances a service order to the next phase if enough time has passed.
+ * Logs transition to the console for demo visibility.
  * @param {object} order
  * @param {object} [options]
  * @param {number} [options.now]
@@ -104,6 +105,8 @@ const advanceOrderPhase = async (order, options = {}) => {
       bay: true,
     },
   });
+
+  console.log(`[SIMULATION] Order #${order.id} advanced ${currentPhase} -> ${nextPhase}`);
 
   return updatedOrder;
 };
