@@ -132,6 +132,8 @@ const updateServicePhase = async (req, res, next) => {
   }
 };
 
+const { getNextPhase, PHASE_PROGRESS_MAP } = require('../services/simulation.service');
+
 /**
  * Track the latest service order for a given vehicle plate (placa)
  */
@@ -171,9 +173,162 @@ const trackOrderByPlaca = async (req, res, next) => {
   }
 };
 
+/**
+ * Demo Control: Force immediate advancement to the next phase
+ */
+const simulateAdvanceOrder = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const orderId = parseInt(id, 10);
+
+    if (isNaN(orderId)) {
+      return res.status(400).json({ error: 'Invalid order ID' });
+    }
+
+    const order = await prisma.serviceOrder.findUnique({
+      where: { id: orderId },
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: 'Service order not found' });
+    }
+
+    if (order.faseActual === 'LISTO') {
+      console.warn(`[DEMO] Order #${orderId} force-advance rejected: Order is already completed.`);
+      return res.status(400).json({ error: 'Order is already completed.' });
+    }
+
+    const currentPhase = order.faseActual;
+    const nextPhase = getNextPhase(currentPhase);
+
+    if (!nextPhase) {
+      console.warn(`[DEMO] Order #${orderId} force-advance rejected: Order is already completed.`);
+      return res.status(400).json({ error: 'Order is already completed.' });
+    }
+
+    const nextProgress = PHASE_PROGRESS_MAP[nextPhase];
+
+    const updatedOrder = await prisma.serviceOrder.update({
+      where: { id: orderId },
+      data: {
+        faseActual: nextPhase,
+        porcentajeProgreso: nextProgress,
+        updatedAt: new Date(),
+      },
+      include: {
+        vehicle: true,
+        package: true,
+        bay: true,
+      },
+    });
+
+    console.log(`[DEMO] Order #${orderId} force-advanced ${currentPhase} -> ${nextPhase}`);
+
+    res.status(200).json(updatedOrder);
+  } catch (error) {
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: 'Service order not found' });
+    }
+    next(error);
+  }
+};
+
+/**
+ * Demo Control: Reset an order back to RECIBIDO (10%) and restart simulation timer
+ */
+const simulateResetOrder = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const orderId = parseInt(id, 10);
+
+    if (isNaN(orderId)) {
+      return res.status(400).json({ error: 'Invalid order ID' });
+    }
+
+    const order = await prisma.serviceOrder.findUnique({
+      where: { id: orderId },
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: 'Service order not found' });
+    }
+
+    const updatedOrder = await prisma.serviceOrder.update({
+      where: { id: orderId },
+      data: {
+        faseActual: 'RECIBIDO',
+        porcentajeProgreso: 10,
+        updatedAt: new Date(),
+      },
+      include: {
+        vehicle: true,
+        package: true,
+        bay: true,
+      },
+    });
+
+    console.log(`[DEMO] Order #${orderId} reset to RECIBIDO`);
+
+    res.status(200).json(updatedOrder);
+  } catch (error) {
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: 'Service order not found' });
+    }
+    next(error);
+  }
+};
+
+/**
+ * Demo Control: Force order directly to LISTO (100%)
+ */
+const simulateCompleteOrder = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const orderId = parseInt(id, 10);
+
+    if (isNaN(orderId)) {
+      return res.status(400).json({ error: 'Invalid order ID' });
+    }
+
+    const order = await prisma.serviceOrder.findUnique({
+      where: { id: orderId },
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: 'Service order not found' });
+    }
+
+    const updatedOrder = await prisma.serviceOrder.update({
+      where: { id: orderId },
+      data: {
+        faseActual: 'LISTO',
+        porcentajeProgreso: 100,
+        updatedAt: new Date(),
+      },
+      include: {
+        vehicle: true,
+        package: true,
+        bay: true,
+      },
+    });
+
+    console.log(`[DEMO] Order #${orderId} force-completed`);
+
+    res.status(200).json(updatedOrder);
+  } catch (error) {
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: 'Service order not found' });
+    }
+    next(error);
+  }
+};
+
 module.exports = {
   getServiceOrders,
   createServiceOrder,
   updateServicePhase,
   trackOrderByPlaca,
+  simulateAdvanceOrder,
+  simulateResetOrder,
+  simulateCompleteOrder,
 };
