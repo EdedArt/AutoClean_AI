@@ -133,6 +133,40 @@ const updateServicePhase = async (req, res, next) => {
 };
 
 const { getNextPhase, PHASE_PROGRESS_MAP } = require('../services/simulation.service');
+const { calculateDeliveryPrediction } = require('../services/prediction.service');
+
+/**
+ * AI Delivery Time Prediction endpoint (Simulated)
+ * Returns estimated delivery time, deterministic accuracy percentage, and recalculation status
+ */
+const getOrderPrediction = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const orderId = parseInt(id, 10);
+
+    if (isNaN(orderId)) {
+      return res.status(400).json({ error: 'Invalid order ID' });
+    }
+
+    const order = await prisma.serviceOrder.findUnique({
+      where: { id: orderId },
+      include: {
+        vehicle: true,
+        package: true,
+        bay: true,
+      },
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: 'Service order not found' });
+    }
+
+    const prediction = calculateDeliveryPrediction(order);
+    res.status(200).json(prediction);
+  } catch (error) {
+    next(error);
+  }
+};
 
 /**
  * Track the latest service order for a given vehicle plate (placa)
@@ -328,6 +362,7 @@ module.exports = {
   createServiceOrder,
   updateServicePhase,
   trackOrderByPlaca,
+  getOrderPrediction,
   simulateAdvanceOrder,
   simulateResetOrder,
   simulateCompleteOrder,
