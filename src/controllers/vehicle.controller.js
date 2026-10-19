@@ -20,14 +20,9 @@ const getVehicles = async (req, res, next) => {
 const getVehicleById = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const vehicleId = parseInt(id, 10);
-
-    if (isNaN(vehicleId)) {
-      return res.status(400).json({ error: 'Invalid vehicle ID' });
-    }
 
     const vehicle = await prisma.vehicle.findUnique({
-      where: { id: vehicleId },
+      where: { id },
     });
 
     if (!vehicle) {
@@ -47,16 +42,12 @@ const createVehicle = async (req, res, next) => {
   try {
     const { placa, marca, modelo, nivelSuciedad } = req.body;
 
-    if (!placa || typeof placa !== 'string' || !placa.trim()) {
-      return res.status(400).json({ error: 'Field "placa" is required' });
-    }
-
     const newVehicle = await prisma.vehicle.create({
       data: {
-        placa: placa.trim(),
-        marca: marca || '',
-        modelo: modelo || '',
-        nivelSuciedad: nivelSuciedad || 'Medio',
+        placa,
+        marca,
+        modelo,
+        nivelSuciedad,
       },
     });
 
