@@ -1,13 +1,6 @@
 const prisma = require('../config/db');
-
-const VALID_PHASES = ['RECIBIDO', 'LAVADO', 'SECADO', 'LISTO'];
-
-const phaseProgressMap = {
-  RECIBIDO: 10,
-  LAVADO: 45,
-  SECADO: 80,
-  LISTO: 100,
-};
+const { getNextPhase, PHASE_PROGRESS_MAP } = require('../services/simulation.service');
+const { calculateDeliveryPrediction } = require('../services/prediction.service');
 
 /**
  * Fetch all service orders with nested vehicle, package, and bay data
@@ -35,46 +28,42 @@ const createServiceOrder = async (req, res, next) => {
   try {
     const { vehicleId, packageId, bayId } = req.body;
 
-    if (vehicleId === undefined || vehicleId === null) {
-      return res.status(400).json({ error: 'Field "vehicleId" is required' });
-    }
-
-    const parsedVehicleId = parseInt(vehicleId, 10);
-    if (isNaN(parsedVehicleId)) {
-      return res.status(400).json({ error: 'Field "vehicleId" must be a valid integer' });
-    }
-
-    // Check if vehicle exists
+    // Verify vehicle exists
     const vehicleExists = await prisma.vehicle.findUnique({
-      where: { id: parsedVehicleId },
+      where: { id: vehicleId },
     });
     if (!vehicleExists) {
       return res.status(404).json({ error: 'Vehicle not found' });
     }
 
-    const parsedPackageId =
-      packageId !== undefined && packageId !== null && packageId !== ''
-        ? parseInt(packageId, 10)
-        : null;
-
-    if (parsedPackageId !== null && isNaN(parsedPackageId)) {
-      return res.status(400).json({ error: 'Field "packageId" must be a valid integer' });
+    // Verify package exists if provided
+    if (packageId) {
+      const packageExists = await prisma.package.findUnique({
+        where: { id: packageId },
+      });
+      if (!packageExists) {
+        return res.status(404).json({ error: 'Package not found' });
+      }
     }
 
-    const parsedBayId =
-      bayId !== undefined && bayId !== null && bayId !== ''
-        ? parseInt(bayId, 10)
-        : null;
-
-    if (parsedBayId !== null && isNaN(parsedBayId)) {
-      return res.status(400).json({ error: 'Field "bayId" must be a valid integer' });
+    // Verify bay exists and check occupancy if provided
+    if (bayId) {
+      const bay = await prisma.bay.findUnique({
+        where: { id: bayId },
+      });
+      if (!bay) {
+        return res.status(404).json({ error: 'Bay not found' });
+      }
+      if (bay.ocupada) {
+        return res.status(409).json({ error: 'Bay is already occupied' });
+      }
     }
 
     const newOrder = await prisma.serviceOrder.create({
       data: {
-        vehicleId: parsedVehicleId,
-        packageId: parsedPackageId,
-        bayId: parsedBayId,
+        vehicleId,
+        packageId: packageId || null,
+        bayId: bayId || null,
       },
       include: {
         vehicle: true,
@@ -97,21 +86,10 @@ const updateServicePhase = async (req, res, next) => {
     const { id } = req.params;
     const { faseActual } = req.body;
 
-    const orderId = parseInt(id, 10);
-    if (isNaN(orderId)) {
-      return res.status(400).json({ error: 'Invalid order ID' });
-    }
-
-    if (!faseActual || !VALID_PHASES.includes(faseActual)) {
-      return res.status(400).json({
-        error: `Invalid faseActual. Must be one of: ${VALID_PHASES.join(', ')}`,
-      });
-    }
-
-    const porcentajeProgreso = phaseProgressMap[faseActual];
+    const porcentajeProgreso = PHASE_PROGRESS_MAP[faseActual];
 
     const updatedOrder = await prisma.serviceOrder.update({
-      where: { id: orderId },
+      where: { id },
       data: {
         faseActual,
         porcentajeProgreso,
@@ -132,9 +110,6 @@ const updateServicePhase = async (req, res, next) => {
   }
 };
 
-const { getNextPhase, PHASE_PROGRESS_MAP } = require('../services/simulation.service');
-const { calculateDeliveryPrediction } = require('../services/prediction.service');
-
 /**
  * AI Delivery Time Prediction endpoint (Simulated)
  * Returns estimated delivery time, deterministic accuracy percentage, and recalculation status
@@ -142,14 +117,9 @@ const { calculateDeliveryPrediction } = require('../services/prediction.service'
 const getOrderPrediction = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const orderId = parseInt(id, 10);
-
-    if (isNaN(orderId)) {
-      return res.status(400).json({ error: 'Invalid order ID' });
-    }
 
     const order = await prisma.serviceOrder.findUnique({
-      where: { id: orderId },
+      where: { id },
       include: {
         vehicle: true,
         package: true,
@@ -175,14 +145,10 @@ const trackOrderByPlaca = async (req, res, next) => {
   try {
     const { placa } = req.params;
 
-    if (!placa || !placa.trim()) {
-      return res.status(400).json({ error: 'Parámetro "placa" es requerido' });
-    }
-
     const order = await prisma.serviceOrder.findFirst({
       where: {
         vehicle: {
-          placa: placa.trim(),
+          placa,
         },
       },
       orderBy: {
@@ -218,14 +184,9 @@ const trackOrderByPlaca = async (req, res, next) => {
 const simulateAdvanceOrder = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const orderId = parseInt(id, 10);
-
-    if (isNaN(orderId)) {
-      return res.status(400).json({ error: 'Invalid order ID' });
-    }
 
     const order = await prisma.serviceOrder.findUnique({
-      where: { id: orderId },
+      where: { id },
     });
 
     if (!order) {
@@ -233,7 +194,7 @@ const simulateAdvanceOrder = async (req, res, next) => {
     }
 
     if (order.faseActual === 'LISTO') {
-      console.warn(`[DEMO] Order #${orderId} force-advance rejected: Order is already completed.`);
+      console.warn(`[DEMO] Order #${id} force-advance rejected: Order is already completed.`);
       return res.status(400).json({ error: 'Order is already completed.' });
     }
 
@@ -241,14 +202,14 @@ const simulateAdvanceOrder = async (req, res, next) => {
     const nextPhase = getNextPhase(currentPhase);
 
     if (!nextPhase) {
-      console.warn(`[DEMO] Order #${orderId} force-advance rejected: Order is already completed.`);
+      console.warn(`[DEMO] Order #${id} force-advance rejected: Order is already completed.`);
       return res.status(400).json({ error: 'Order is already completed.' });
     }
 
     const nextProgress = PHASE_PROGRESS_MAP[nextPhase];
 
     const updatedOrder = await prisma.serviceOrder.update({
-      where: { id: orderId },
+      where: { id },
       data: {
         faseActual: nextPhase,
         porcentajeProgreso: nextProgress,
@@ -261,7 +222,7 @@ const simulateAdvanceOrder = async (req, res, next) => {
       },
     });
 
-    console.log(`[DEMO] Order #${orderId} force-advanced ${currentPhase} -> ${nextPhase}`);
+    console.log(`[DEMO] Order #${id} force-advanced ${currentPhase} -> ${nextPhase}`);
 
     res.status(200).json(updatedOrder);
   } catch (error) {
@@ -278,14 +239,9 @@ const simulateAdvanceOrder = async (req, res, next) => {
 const simulateResetOrder = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const orderId = parseInt(id, 10);
-
-    if (isNaN(orderId)) {
-      return res.status(400).json({ error: 'Invalid order ID' });
-    }
 
     const order = await prisma.serviceOrder.findUnique({
-      where: { id: orderId },
+      where: { id },
     });
 
     if (!order) {
@@ -293,7 +249,7 @@ const simulateResetOrder = async (req, res, next) => {
     }
 
     const updatedOrder = await prisma.serviceOrder.update({
-      where: { id: orderId },
+      where: { id },
       data: {
         faseActual: 'RECIBIDO',
         porcentajeProgreso: 10,
@@ -306,7 +262,7 @@ const simulateResetOrder = async (req, res, next) => {
       },
     });
 
-    console.log(`[DEMO] Order #${orderId} reset to RECIBIDO`);
+    console.log(`[DEMO] Order #${id} reset to RECIBIDO`);
 
     res.status(200).json(updatedOrder);
   } catch (error) {
@@ -323,14 +279,9 @@ const simulateResetOrder = async (req, res, next) => {
 const simulateCompleteOrder = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const orderId = parseInt(id, 10);
-
-    if (isNaN(orderId)) {
-      return res.status(400).json({ error: 'Invalid order ID' });
-    }
 
     const order = await prisma.serviceOrder.findUnique({
-      where: { id: orderId },
+      where: { id },
     });
 
     if (!order) {
@@ -338,7 +289,7 @@ const simulateCompleteOrder = async (req, res, next) => {
     }
 
     const updatedOrder = await prisma.serviceOrder.update({
-      where: { id: orderId },
+      where: { id },
       data: {
         faseActual: 'LISTO',
         porcentajeProgreso: 100,
@@ -351,7 +302,7 @@ const simulateCompleteOrder = async (req, res, next) => {
       },
     });
 
-    console.log(`[DEMO] Order #${orderId} force-completed`);
+    console.log(`[DEMO] Order #${id} force-completed`);
 
     res.status(200).json(updatedOrder);
   } catch (error) {

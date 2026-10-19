@@ -179,12 +179,12 @@ async function runPredictionTests() {
 
   try {
     // Setup test vehicle
-    const testPlaca = `PRED-${Date.now().toString().slice(-4)}`;
+    const testPlaca = `PRE-${Math.floor(100 + Math.random() * 900)}`;
     const vRes = await makeRequest('POST', '/api/vehicles', {
       placa: testPlaca,
       marca: 'AITest',
       modelo: 'Predictor',
-      nivelSuciedad: 'Medio',
+      nivelSuciedad: 'Moderado',
     });
     assert.strictEqual(vRes.status, 201);
     testVehicle = vRes.body;
@@ -257,7 +257,8 @@ async function runPredictionTests() {
 
     const invalidIdRes = await makeRequest('GET', '/api/orders/invalid-id/prediction');
     assert.strictEqual(invalidIdRes.status, 400);
-    assert.strictEqual(invalidIdRes.body.error, 'Invalid order ID');
+    assert.strictEqual(invalidIdRes.body.error.message, 'Validation failed');
+    assert.strictEqual(invalidIdRes.body.error.details[0].field, 'id');
     console.log('  ✅ Prediction endpoint returns 404 for non-existent and 400 for invalid ID.');
 
     console.log('\n🎉 All AI Delivery Time Prediction tests passed successfully!');

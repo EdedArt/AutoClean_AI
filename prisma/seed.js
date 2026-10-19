@@ -49,7 +49,7 @@ async function main() {
       placa: 'XYZ-123',
       marca: 'Mazda',
       modelo: 'CX-5',
-      nivelSuciedad: 'Alto',
+      nivelSuciedad: 'Severo',
     },
   });
 

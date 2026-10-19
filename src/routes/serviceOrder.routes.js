@@ -1,4 +1,10 @@
 const { Router } = require('express');
+const { validate } = require('../middlewares/validate.middleware');
+const { idParam, placaParam } = require('../validators/common.schema');
+const {
+  createOrder: createOrderSchema,
+  updatePhase: updatePhaseSchema,
+} = require('../validators/serviceOrder.schema');
 const {
   getServiceOrders,
   createServiceOrder,
@@ -13,14 +19,19 @@ const {
 const router = Router();
 
 router.get('/', getServiceOrders);
-router.get('/track/:placa', trackOrderByPlaca);
-router.get('/:id/prediction', getOrderPrediction);
-router.post('/', createServiceOrder);
-router.patch('/:id/phase', updateServicePhase);
+router.get('/track/:placa', validate(placaParam, 'params'), trackOrderByPlaca);
+router.get('/:id/prediction', validate(idParam, 'params'), getOrderPrediction);
+router.post('/', validate(createOrderSchema, 'body'), createServiceOrder);
+router.patch(
+  '/:id/phase',
+  validate(idParam, 'params'),
+  validate(updatePhaseSchema, 'body'),
+  updateServicePhase
+);
 
 // Demo control routes
-router.post('/:id/simulate/advance', simulateAdvanceOrder);
-router.post('/:id/simulate/reset', simulateResetOrder);
-router.post('/:id/simulate/complete', simulateCompleteOrder);
+router.post('/:id/simulate/advance', validate(idParam, 'params'), simulateAdvanceOrder);
+router.post('/:id/simulate/reset', validate(idParam, 'params'), simulateResetOrder);
+router.post('/:id/simulate/complete', validate(idParam, 'params'), simulateCompleteOrder);
 
 module.exports = router;

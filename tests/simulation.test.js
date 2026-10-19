@@ -77,7 +77,7 @@ async function runTests() {
       placa: testPlaca,
       marca: 'TestMarca',
       modelo: 'TestModel',
-      nivelSuciedad: 'Alto',
+      nivelSuciedad: 'Severo',
     },
   });
 

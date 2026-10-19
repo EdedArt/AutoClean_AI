@@ -51,14 +51,14 @@ function sleep(ms) {
 async function runIntegrationTest() {
   console.log('🚀 Running Integration Test with live HTTP Server & Background Scheduler...\n');
 
-  const testPlaca = `SIM-${Date.now().toString().slice(-4)}`;
+  const testPlaca = `SIM-${Math.floor(100 + Math.random() * 900)}`;
 
   // 1. Create a vehicle
   const vRes = await makeRequest('POST', '/api/vehicles', {
     placa: testPlaca,
     marca: 'Hyundai',
     modelo: 'Tucson',
-    nivelSuciedad: 'Alto',
+    nivelSuciedad: 'Severo',
   });
   assert.strictEqual(vRes.status, 201);
   const vehicle = vRes.body;

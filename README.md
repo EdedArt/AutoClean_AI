@@ -2,6 +2,53 @@
 
 Backend REST API for **AutoClean AI** (Node.js + Express + Prisma + SQLite).
 
+## Input Validation with Zod (Phase 14)
+
+All request inputs (body and route parameters) are validated using schemas built with **Zod** via the centralized `validate(schema, source)` middleware.
+
+### Unified Validation Error Response (400 Bad Request)
+
+When any input fails schema validation, the API returns a structured `400 Bad Request` with the following unified JSON shape:
+
+```json
+{
+  "error": {
+    "message": "Validation failed",
+    "details": [
+      {
+        "field": "placa",
+        "message": "Placa must be in format XXX-123 (three letters, hyphen, three digits)"
+      }
+    ]
+  }
+}
+```
+
+### Schema Rules & Normalization
+
+1. **Vehicles (`POST /api/vehicles`):**
+   * `placa`: Required string. Formatted as three letters, hyphen, and three digits (`XXX-123`). Automatically normalized to uppercase (e.g., `"xyz-123"` becomes `"XYZ-123"`).
+   * `marca`: Required non-empty string.
+   * `modelo`: Required non-empty string.
+   * `nivelSuciedad`: Required enum with values: `"Leve" | "Moderado" | "Severo"`.
+
+2. **Service Orders (`POST /api/orders`, `PATCH /api/orders/:id/phase`):**
+   * `vehicleId`: Required positive integer (coerced).
+   * `packageId`: Optional positive integer (coerced).
+   * `bayId`: Optional positive integer (coerced). If the designated bay is already marked occupied (`ocupada: true`), returns `409 Conflict` with `{"error": "Bay is already occupied"}`.
+   * `faseActual`: Validated against canonical phases: `"RECIBIDO" | "LAVADO" | "SECADO" | "LISTO"`.
+
+3. **Common Route Parameters:**
+   * `:id` / `:orderId`: Coerced positive integers. Non-numeric or negative values return `400 Bad Request`.
+   * `:placa`: Validated against `XXX-123` pattern and normalized to uppercase.
+
+4. **Evidence Uploads (`POST /api/orders/:orderId/evidence`):**
+   * Validates `:orderId` parameter before file processing.
+   * `etapa`: Optional string validated against canonical phases (`RECIBIDO`, `LAVADO`, `SECADO`, `LISTO`).
+   * **Orphan File Cleanup:** If Multer persists an uploaded image and subsequent validation fails (such as an invalid `etapa`), the temporary file is immediately removed from disk to avoid orphan artifacts.
+
+---
+
 ## Demo Control Endpoints (Phase 12)
 
 Manual override endpoints designed for live presentations and UI testing, allowing operators to force order status changes without waiting for the background simulation timer:
@@ -56,6 +103,8 @@ The backend includes a background scheduler (`setInterval` every ~10s) that auto
 * **Configuration:** `SIMULATION_PHASE_DURATION_MS` in `.env` (default: `60000` = 1 minute per phase).
 * Any manual update (via standard `PATCH /api/orders/:id/phase` or demo control endpoints) updates `updatedAt`, resetting the timer so that the background scheduler never immediately overrides demo actions.
 
+---
+
 ## AI Delivery Time Prediction (Phase 13)
 
 Simulated deterministic prediction engine providing realistic delivery time estimates and confidence percentages for client tracking:
@@ -92,7 +141,7 @@ Fetches delivery prediction metrics for a specific order.
   }
   ```
 * **Response (Not Found):** `404 Not Found` with `{"error": "Service order not found"}`.
-* **Response (Invalid ID):** `400 Bad Request` with `{"error": "Invalid order ID"}`.
+* **Response (Invalid ID):** `400 Bad Request` with unified validation error format.
 
 **Example cURL:**
 ```bash
@@ -136,9 +185,11 @@ curl http://localhost:3000/api/orders/track/ABC-123
 * **Completion Handling:** When `faseActual === "LISTO"`, `estimatedDeliveryTime` returns actual finish time (`updatedAt`), `accuracyPercentage` is `100`, `recalculated` is `false`, and `message` is `null`.
 * **Delay Detection:** If elapsed time in current phase exceeds `SIMULATION_PHASE_DURATION_MS` and the order is not in `LISTO`, flags `recalculated: true` and `message: "Tiempo recalculado por posible retraso"`.
 
+---
+
 ## Running Tests
 
-Execute the complete test suite (unit, integration, demo controls, and prediction):
+Execute the complete test suite (simulation, integration, demo controls, prediction, and validation):
 ```bash
 npm test
 ```
