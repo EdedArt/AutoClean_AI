@@ -194,6 +194,7 @@ const simulateAdvanceOrder = async (req, res, next) => {
     }
 
     if (order.faseActual === 'LISTO') {
+      console.warn(`[DEMO] Order #${orderId} force-advance rejected: Order is already completed.`);
       return res.status(400).json({ error: 'Order is already completed.' });
     }
 
@@ -201,6 +202,7 @@ const simulateAdvanceOrder = async (req, res, next) => {
     const nextPhase = getNextPhase(currentPhase);
 
     if (!nextPhase) {
+      console.warn(`[DEMO] Order #${orderId} force-advance rejected: Order is already completed.`);
       return res.status(400).json({ error: 'Order is already completed.' });
     }
 
