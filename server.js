@@ -3,6 +3,8 @@ const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
+const prisma = require('./src/config/db');
+const { advanceOrderPhase } = require('./src/services/simulation.service');
 const healthRoutes = require('./src/routes/health.routes');
 const vehicleRoutes = require('./src/routes/vehicle.routes');
 const bayRoutes = require('./src/routes/bay.routes');
@@ -12,6 +14,7 @@ const evidenceRoutes = require('./src/routes/evidence.routes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const SIMULATION_INTERVAL_MS = 10000; // Check active orders every ~10 seconds
 
 // Middlewares
 app.use(cors());
@@ -37,6 +40,27 @@ app.use((err, req, res, next) => {
   });
 });
 
-app.listen(PORT, () => {
+// Background simulation scheduler: runs every ~10s and advances active orders
+const simulationInterval = setInterval(async () => {
+  try {
+    const activeOrders = await prisma.serviceOrder.findMany({
+      where: {
+        faseActual: {
+          not: 'LISTO',
+        },
+      },
+    });
+
+    for (const order of activeOrders) {
+      await advanceOrderPhase(order);
+    }
+  } catch (error) {
+    console.error('[SIMULATION] Error in scheduler tick:', error.message || error);
+  }
+}, SIMULATION_INTERVAL_MS);
+
+const server = app.listen(PORT, () => {
   console.log(`AutoClean AI backend running on http://localhost:${PORT}`);
 });
+
+module.exports = { app, server, simulationInterval };
