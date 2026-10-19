@@ -132,6 +132,8 @@ const updateServicePhase = async (req, res, next) => {
   }
 };
 
+const { getNextPhase, PHASE_PROGRESS_MAP } = require('../services/simulation.service');
+
 /**
  * Track the latest service order for a given vehicle plate (placa)
  */
@@ -171,9 +173,68 @@ const trackOrderByPlaca = async (req, res, next) => {
   }
 };
 
+/**
+ * Demo Control: Force immediate advancement to the next phase
+ */
+const simulateAdvanceOrder = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const orderId = parseInt(id, 10);
+
+    if (isNaN(orderId)) {
+      return res.status(400).json({ error: 'Invalid order ID' });
+    }
+
+    const order = await prisma.serviceOrder.findUnique({
+      where: { id: orderId },
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: 'Service order not found' });
+    }
+
+    if (order.faseActual === 'LISTO') {
+      return res.status(400).json({ error: 'Order is already completed.' });
+    }
+
+    const currentPhase = order.faseActual;
+    const nextPhase = getNextPhase(currentPhase);
+
+    if (!nextPhase) {
+      return res.status(400).json({ error: 'Order is already completed.' });
+    }
+
+    const nextProgress = PHASE_PROGRESS_MAP[nextPhase];
+
+    const updatedOrder = await prisma.serviceOrder.update({
+      where: { id: orderId },
+      data: {
+        faseActual: nextPhase,
+        porcentajeProgreso: nextProgress,
+        updatedAt: new Date(),
+      },
+      include: {
+        vehicle: true,
+        package: true,
+        bay: true,
+      },
+    });
+
+    console.log(`[DEMO] Order #${orderId} force-advanced ${currentPhase} -> ${nextPhase}`);
+
+    res.status(200).json(updatedOrder);
+  } catch (error) {
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: 'Service order not found' });
+    }
+    next(error);
+  }
+};
+
 module.exports = {
   getServiceOrders,
   createServiceOrder,
   updateServicePhase,
   trackOrderByPlaca,
+  simulateAdvanceOrder,
 };
