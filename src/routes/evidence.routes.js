@@ -14,7 +14,7 @@ const router = Router();
 const handleUpload = (req, res, next) => {
   upload.any()(req, res, (err) => {
     if (err) {
-      return res.status(400).json({ error: err.message });
+      return next(err);
     }
     if (req.files && req.files.length > 0) {
       req.file = req.files[0];

@@ -40,6 +40,32 @@ const errorHandler = (err, req, res, next) => {
     statusCode = 400;
     code = 'INVALID_REFERENCE';
     message = 'Invalid reference: related resource does not exist';
+  } else if (
+    err.code === 'LIMIT_FILE_SIZE' ||
+    (err.name === 'MulterError' && err.code === 'LIMIT_FILE_SIZE')
+  ) {
+    statusCode = 413;
+    code = 'FILE_TOO_LARGE';
+    message = 'File size exceeds maximum allowed limit of 5 MB';
+  } else if (err.name === 'MulterError') {
+    statusCode = 400;
+    code = 'FILE_UPLOAD_ERROR';
+    message = err.message;
+  } else if (
+    err.code === 'INVALID_FILE_TYPE' ||
+    (err.message && err.message.includes('Solo se permiten archivos de imagen'))
+  ) {
+    statusCode = 400;
+    code = 'INVALID_FILE_TYPE';
+    message = 'Solo se permiten archivos de imagen (JPEG, PNG, WEBP)';
+  } else if (
+    err instanceof SyntaxError &&
+    (err.status === 400 || err.statusCode === 400) &&
+    ('body' in err || err.type === 'entity.parse.failed')
+  ) {
+    statusCode = 400;
+    code = 'INVALID_JSON';
+    message = 'Malformed JSON in request body';
   } else if (statusCode === 500) {
     code = 'INTERNAL_ERROR';
     message =

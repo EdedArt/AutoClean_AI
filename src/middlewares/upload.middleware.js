@@ -27,6 +27,8 @@ const fileFilter = (req, file, cb) => {
   } else {
     const error = new Error('Solo se permiten archivos de imagen (JPEG, PNG, WEBP)');
     error.status = 400;
+    error.statusCode = 400;
+    error.code = 'INVALID_FILE_TYPE';
     cb(error, false);
   }
 };
