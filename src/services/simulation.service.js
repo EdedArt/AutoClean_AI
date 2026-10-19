@@ -15,6 +15,24 @@ const PHASE_PROGRESS_MAP = {
   LISTO: 100,
 };
 
+const DEFAULT_PHASE_DURATION_MS = 60000; // 1 minute per phase by default
+
+/**
+ * Reads phase duration from environment variable SIMULATION_PHASE_DURATION_MS,
+ * falling back to DEFAULT_PHASE_DURATION_MS (60000ms).
+ * @returns {number}
+ */
+const getPhaseDurationMs = () => {
+  const envVal = process.env.SIMULATION_PHASE_DURATION_MS;
+  if (envVal !== undefined && envVal !== null && envVal !== '') {
+    const parsed = parseInt(envVal, 10);
+    if (!isNaN(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return DEFAULT_PHASE_DURATION_MS;
+};
+
 /**
  * Returns the next phase in the car wash cycle, or null if finished.
  * @param {string} currentPhase
@@ -63,7 +81,7 @@ const advanceOrderPhase = async (order, options = {}) => {
   }
 
   const now = options.now || Date.now();
-  const durationMs = options.durationMs || 60000;
+  const durationMs = options.durationMs || getPhaseDurationMs();
 
   if (!shouldAdvancePhase(order, now, durationMs)) {
     return null;
@@ -94,6 +112,8 @@ module.exports = {
   VALID_PHASES,
   NEXT_PHASE_MAP,
   PHASE_PROGRESS_MAP,
+  DEFAULT_PHASE_DURATION_MS,
+  getPhaseDurationMs,
   getNextPhase,
   shouldAdvancePhase,
   advanceOrderPhase,
