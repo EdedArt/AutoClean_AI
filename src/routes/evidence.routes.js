@@ -1,5 +1,8 @@
 const { Router } = require('express');
 const upload = require('../middlewares/upload.middleware');
+const { validate } = require('../middlewares/validate.middleware');
+const { orderIdParam } = require('../validators/common.schema');
+const { uploadEvidence: uploadEvidenceSchema } = require('../validators/evidence.schema');
 const {
   uploadEvidence,
   getEvidencesByOrder,
@@ -20,7 +23,14 @@ const handleUpload = (req, res, next) => {
   });
 };
 
-router.post('/:orderId/evidence', handleUpload, uploadEvidence);
-router.get('/:orderId/evidence', getEvidencesByOrder);
+router.post(
+  '/:orderId/evidence',
+  validate(orderIdParam, 'params'),
+  handleUpload,
+  validate(uploadEvidenceSchema, 'body'),
+  uploadEvidence
+);
+
+router.get('/:orderId/evidence', validate(orderIdParam, 'params'), getEvidencesByOrder);
 
 module.exports = router;
