@@ -253,10 +253,12 @@ async function runPredictionTests() {
     console.log('\n10. Testing error handling (404 and 400)...');
     const notFoundRes = await makeRequest('GET', '/api/orders/999999/prediction');
     assert.strictEqual(notFoundRes.status, 404);
-    assert.strictEqual(notFoundRes.body.error, 'Service order not found');
+    assert.strictEqual(notFoundRes.body.error.message, 'Service order not found');
+    assert.strictEqual(notFoundRes.body.error.code, 'NOT_FOUND');
 
     const invalidIdRes = await makeRequest('GET', '/api/orders/invalid-id/prediction');
     assert.strictEqual(invalidIdRes.status, 400);
+    assert.strictEqual(invalidIdRes.body.error.code, 'VALIDATION_ERROR');
     assert.strictEqual(invalidIdRes.body.error.message, 'Validation failed');
     assert.strictEqual(invalidIdRes.body.error.details[0].field, 'id');
     console.log('  ✅ Prediction endpoint returns 404 for non-existent and 400 for invalid ID.');

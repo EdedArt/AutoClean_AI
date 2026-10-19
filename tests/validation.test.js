@@ -8,6 +8,7 @@ const prisma = require('../src/config/db');
 const vehicleRoutes = require('../src/routes/vehicle.routes');
 const serviceOrderRoutes = require('../src/routes/serviceOrder.routes');
 const evidenceRoutes = require('../src/routes/evidence.routes');
+const { notFoundHandler, errorHandler } = require('../src/middlewares/error.middleware');
 
 const TEST_PORT = 3096;
 const app = express();
@@ -15,6 +16,8 @@ app.use(express.json());
 app.use('/api/vehicles', vehicleRoutes);
 app.use('/api/orders', serviceOrderRoutes);
 app.use('/api/orders', evidenceRoutes);
+app.use(notFoundHandler);
+app.use(errorHandler);
 
 function makeRequest(method, reqPath, body = null, headers = {}) {
   return new Promise((resolve, reject) => {
@@ -189,7 +192,8 @@ async function runValidationTests() {
       bayId: occupiedBay.id,
     });
     assert.strictEqual(occupiedBayRes.status, 409);
-    assert.strictEqual(occupiedBayRes.body.error, 'Bay is already occupied');
+    assert.strictEqual(occupiedBayRes.body.error.code, 'BAY_OCCUPIED');
+    assert.strictEqual(occupiedBayRes.body.error.message, 'Bay is already occupied');
     console.log('  ✅ Creating order with occupied bay returns 409.');
 
     // 8. Service Order PATCH phase validation

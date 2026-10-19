@@ -103,7 +103,8 @@ async function runDemoControlTests() {
     console.log('\n5. Testing advance on order in LISTO returns 400...');
     const advFail = await makeRequest('POST', `/api/orders/${order.id}/simulate/advance`);
     assert.strictEqual(advFail.status, 400);
-    assert.strictEqual(advFail.body.error, 'Order is already completed.');
+    assert.strictEqual(advFail.body.error.message, 'Order is already completed.');
+    assert.strictEqual(advFail.body.error.code, 'ORDER_COMPLETED');
     console.log('  ✅ Returned 400 with "Order is already completed." message.');
 
     // 6. Test POST /api/orders/:id/simulate/reset
@@ -141,21 +142,25 @@ async function runDemoControlTests() {
     const nonExistentId = 999999;
     const notFoundAdv = await makeRequest('POST', `/api/orders/${nonExistentId}/simulate/advance`);
     assert.strictEqual(notFoundAdv.status, 404);
-    assert.strictEqual(notFoundAdv.body.error, 'Service order not found');
+    assert.strictEqual(notFoundAdv.body.error.message, 'Service order not found');
+    assert.strictEqual(notFoundAdv.body.error.code, 'NOT_FOUND');
 
     const notFoundReset = await makeRequest('POST', `/api/orders/${nonExistentId}/simulate/reset`);
     assert.strictEqual(notFoundReset.status, 404);
-    assert.strictEqual(notFoundReset.body.error, 'Service order not found');
+    assert.strictEqual(notFoundReset.body.error.message, 'Service order not found');
+    assert.strictEqual(notFoundReset.body.error.code, 'NOT_FOUND');
 
     const notFoundComplete = await makeRequest('POST', `/api/orders/${nonExistentId}/simulate/complete`);
     assert.strictEqual(notFoundComplete.status, 404);
-    assert.strictEqual(notFoundComplete.body.error, 'Service order not found');
+    assert.strictEqual(notFoundComplete.body.error.message, 'Service order not found');
+    assert.strictEqual(notFoundComplete.body.error.code, 'NOT_FOUND');
     console.log('  ✅ All three endpoints return 404 for non-existent order.');
 
     // 9. Test 400 for invalid non-integer order ID
     console.log('\n9. Testing 400 for invalid ID format...');
     const invalidId = await makeRequest('POST', '/api/orders/abc/simulate/advance');
     assert.strictEqual(invalidId.status, 400);
+    assert.strictEqual(invalidId.body.error.code, 'VALIDATION_ERROR');
     assert.strictEqual(invalidId.body.error.message, 'Validation failed');
     assert.strictEqual(invalidId.body.error.details[0].field, 'id');
     console.log('  ✅ Returns 400 for non-integer order ID.');
