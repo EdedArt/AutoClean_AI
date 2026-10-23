@@ -35,8 +35,40 @@ app.use((req, res, next) => {
   return helmet()(req, res, next);
 });
 
-// Middlewares
-app.use(cors());
+// CORS configuration driven by CORS_ORIGINS
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Requests with no Origin header (native mobile apps, curl, server-to-server) are always allowed
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    const currentCors = env.CORS_ORIGINS || '*';
+    if (currentCors === '*') {
+      return callback(null, true);
+    }
+
+    const allowedOrigins = currentCors
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean);
+
+    if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+      return callback(null, true);
+    }
+
+    // Origin not allowed: omit Access-Control-Allow-Origin
+    return callback(null, false);
+  },
+  methods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  optionsSuccessStatus: 200,
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
+
 app.use(express.json());
 app.use(morgan('dev'));
 
