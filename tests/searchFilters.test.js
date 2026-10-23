@@ -6,8 +6,11 @@ process.env.SIMULATION_PHASE_DURATION_MS = '60000';
 
 const { app, server, simulationInterval } = require('../server');
 const prisma = require('../src/config/db');
+const { getOperatorAuthHeaders } = require('./helpers/auth');
 
-function makeRequest(method, reqPath, body = null) {
+let authHeaders = {};
+
+function makeRequest(method, reqPath, body = null, customHeaders = {}) {
   return new Promise((resolve, reject) => {
     const options = {
       hostname: 'localhost',
@@ -16,6 +19,8 @@ function makeRequest(method, reqPath, body = null) {
       method,
       headers: {
         'Content-Type': 'application/json',
+        ...authHeaders,
+        ...customHeaders,
       },
     };
 
@@ -44,6 +49,8 @@ function makeRequest(method, reqPath, body = null) {
 
 async function runSearchFiltersTests() {
   console.log('🧪 Starting Search, Filters, Pagination and Bay Summary Test Suite...\n');
+
+  authHeaders = await getOperatorAuthHeaders(prisma);
 
   const createdVehicleIds = [];
   const createdOrderIds = [];

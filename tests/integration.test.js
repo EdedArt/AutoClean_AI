@@ -7,8 +7,11 @@ process.env.PORT = '3099';
 
 const { app, server, simulationInterval } = require('../server');
 const prisma = require('../src/config/db');
+const { getOperatorAuthHeaders } = require('./helpers/auth');
 
-function makeRequest(method, path, body = null) {
+let authHeaders = {};
+
+function makeRequest(method, path, body = null, customHeaders = {}) {
   return new Promise((resolve, reject) => {
     const options = {
       hostname: 'localhost',
@@ -17,6 +20,8 @@ function makeRequest(method, path, body = null) {
       method,
       headers: {
         'Content-Type': 'application/json',
+        ...authHeaders,
+        ...customHeaders,
       },
     };
 
@@ -50,6 +55,8 @@ function sleep(ms) {
 
 async function runIntegrationTest() {
   console.log('🚀 Running Integration Test with live HTTP Server & Background Scheduler...\n');
+
+  authHeaders = await getOperatorAuthHeaders(prisma);
 
   const testPlaca = `SIM-${Math.floor(100 + Math.random() * 900)}`;
 

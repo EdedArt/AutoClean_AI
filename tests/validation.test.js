@@ -9,6 +9,9 @@ const vehicleRoutes = require('../src/routes/vehicle.routes');
 const serviceOrderRoutes = require('../src/routes/serviceOrder.routes');
 const evidenceRoutes = require('../src/routes/evidence.routes');
 const { notFoundHandler, errorHandler } = require('../src/middlewares/error.middleware');
+const { getOperatorAuthHeaders } = require('./helpers/auth');
+
+let authHeaders = {};
 
 const TEST_PORT = 3096;
 const app = express();
@@ -28,6 +31,7 @@ function makeRequest(method, reqPath, body = null, headers = {}) {
       path: reqPath,
       method,
       headers: {
+        ...authHeaders,
         ...(!isBuffer && body ? { 'Content-Type': 'application/json' } : {}),
         ...headers,
       },
@@ -64,6 +68,7 @@ function makeRequest(method, reqPath, body = null, headers = {}) {
 async function runValidationTests() {
   console.log('🧪 Starting Input Validation (Zod) Test Suite...\n');
   const server = app.listen(TEST_PORT);
+  authHeaders = await getOperatorAuthHeaders(prisma);
 
   const createdVehicleIds = [];
   const createdOrderIds = [];
