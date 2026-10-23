@@ -3,20 +3,71 @@ const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
 const { getNextPhase, PHASE_PROGRESS_MAP } = require('../services/simulation.service');
 const { calculateDeliveryPrediction } = require('../services/prediction.service');
+const { getPrismaPagination, buildPaginatedResponse } = require('../utils/pagination');
 
 /**
  * Fetch all service orders with nested vehicle, package, and bay data
+ * Supports filtering by placa, fase, bayId, activeOnly, and pagination/sort.
  */
 const getServiceOrders = asyncHandler(async (req, res) => {
-  const orders = await prisma.serviceOrder.findMany({
-    include: {
-      vehicle: true,
-      package: true,
-      bay: true,
-    },
-    orderBy: { createdAt: 'desc' },
-  });
-  res.status(200).json(orders);
+  const {
+    page = 1,
+    limit = 10,
+    placa,
+    fase,
+    bayId,
+    activeOnly,
+    sort = 'newest',
+  } = req.query || {};
+
+  const andConditions = [];
+
+  if (placa) {
+    andConditions.push({
+      vehicle: {
+        placa: { contains: placa },
+      },
+    });
+  }
+
+  if (fase) {
+    andConditions.push({
+      faseActual: fase,
+    });
+  }
+
+  if (bayId) {
+    andConditions.push({
+      bayId,
+    });
+  }
+
+  if (activeOnly) {
+    andConditions.push({
+      faseActual: { not: 'LISTO' },
+    });
+  }
+
+  const where = andConditions.length > 0 ? { AND: andConditions } : {};
+  const orderBy = { createdAt: sort === 'oldest' ? 'asc' : 'desc' };
+  const { skip, take } = getPrismaPagination(page, limit);
+
+  const [orders, total] = await prisma.$transaction([
+    prisma.serviceOrder.findMany({
+      where,
+      include: {
+        vehicle: true,
+        package: true,
+        bay: true,
+      },
+      orderBy,
+      skip,
+      take,
+    }),
+    prisma.serviceOrder.count({ where }),
+  ]);
+
+  res.status(200).json(buildPaginatedResponse(orders, total, page, limit));
 });
 
 /**
