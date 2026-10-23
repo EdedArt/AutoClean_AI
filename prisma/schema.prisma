@@ -57,3 +57,12 @@ model Evidence {
   serviceOrder   ServiceOrder @relation(fields: [serviceOrderId], references: [id])
   createdAt      DateTime     @default(now())
 }
+
+model User {
+  id           Int      @id @default(autoincrement())
+  email        String   @unique
+  passwordHash String
+  nombre       String
+  rol          String   // "OPERARIO" | "CLIENTE"
+  createdAt    DateTime @default(now())
+}
