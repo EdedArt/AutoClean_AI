@@ -29,3 +29,289 @@ tags:
   - name: Evidence
     description: Photographic evidence management and upload per order phase
 paths: {}
+components:
+  schemas:
+    Phase:
+      type: string
+      enum:
+        - RECIBIDO
+        - LAVADO
+        - SECADO
+        - LISTO
+      description: Canonical car wash service phases
+      example: LAVADO
+
+    Vehicle:
+      type: object
+      required:
+        - id
+        - placa
+        - marca
+        - modelo
+        - nivelSuciedad
+        - createdAt
+      properties:
+        id:
+          type: integer
+          example: 1
+        placa:
+          type: string
+          example: XYZ-123
+          description: Unique license plate in format XXX-123
+        marca:
+          type: string
+          example: Mazda
+        modelo:
+          type: string
+          example: CX-5
+        nivelSuciedad:
+          type: string
+          enum: [Leve, Moderado, Severo]
+          example: Moderado
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-10-23T12:00:00.000Z'
+
+    Bay:
+      type: object
+      required:
+        - id
+        - numero
+        - ocupada
+      properties:
+        id:
+          type: integer
+          example: 1
+        numero:
+          type: integer
+          example: 1
+        ocupada:
+          type: boolean
+          example: false
+
+    Package:
+      type: object
+      required:
+        - id
+        - nombre
+        - descripcion
+      properties:
+        id:
+          type: integer
+          example: 1
+        nombre:
+          type: string
+          example: Lavado Premium
+        descripcion:
+          type: string
+          example: Lavado exterior a presión, aspirado profundo y encerado
+        precio:
+          type: number
+          format: float
+          nullable: true
+          example: 35000.0
+
+    Prediction:
+      type: object
+      required:
+        - estimatedDeliveryTime
+        - accuracyPercentage
+        - recalculated
+        - message
+      properties:
+        estimatedDeliveryTime:
+          type: string
+          format: date-time
+          example: '2026-10-23T12:35:00.000Z'
+        accuracyPercentage:
+          type: integer
+          minimum: 88
+          maximum: 100
+          example: 94
+        recalculated:
+          type: boolean
+          example: false
+        message:
+          type: string
+          nullable: true
+          example: null
+
+    Evidence:
+      type: object
+      required:
+        - id
+        - url
+        - etapa
+        - serviceOrderId
+        - createdAt
+      properties:
+        id:
+          type: integer
+          example: 1
+        url:
+          type: string
+          example: /evidence/1729700000000-123456789.jpg
+          description: Relative path to access the stored image
+        etapa:
+          type: string
+          example: LAVADO
+          description: Service phase during which the photo was captured
+        serviceOrderId:
+          type: integer
+          example: 1
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-10-23T12:15:00.000Z'
+
+    ServiceOrder:
+      type: object
+      required:
+        - id
+        - vehicleId
+        - faseActual
+        - porcentajeProgreso
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: integer
+          example: 1
+        vehicleId:
+          type: integer
+          example: 1
+        packageId:
+          type: integer
+          nullable: true
+          example: 1
+        bayId:
+          type: integer
+          nullable: true
+          example: 1
+        faseActual:
+          $ref: '#/components/schemas/Phase'
+        porcentajeProgreso:
+          type: integer
+          minimum: 0
+          maximum: 100
+          example: 45
+        horaEstimadaEntrega:
+          type: string
+          format: date-time
+          nullable: true
+          example: null
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-10-23T12:00:00.000Z'
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2026-10-23T12:15:00.000Z'
+        vehicle:
+          $ref: '#/components/schemas/Vehicle'
+        package:
+          allOf:
+            - $ref: '#/components/schemas/Package'
+          nullable: true
+        bay:
+          allOf:
+            - $ref: '#/components/schemas/Bay'
+          nullable: true
+
+    TrackedOrder:
+      allOf:
+        - $ref: '#/components/schemas/ServiceOrder'
+        - type: object
+          properties:
+            prediction:
+              $ref: '#/components/schemas/Prediction'
+
+    CreateVehicleRequest:
+      type: object
+      required:
+        - placa
+        - marca
+        - modelo
+        - nivelSuciedad
+      properties:
+        placa:
+          type: string
+          pattern: '^[A-Za-z]{3}-[0-9]{3}$'
+          example: XYZ-123
+          description: License plate format XXX-123 (automatically uppercase normalized)
+        marca:
+          type: string
+          example: Mazda
+        modelo:
+          type: string
+          example: CX-5
+        nivelSuciedad:
+          type: string
+          enum: [Leve, Moderado, Severo]
+          example: Moderado
+
+    CreateOrderRequest:
+      type: object
+      required:
+        - vehicleId
+      properties:
+        vehicleId:
+          type: integer
+          example: 1
+          description: ID of registered vehicle
+        packageId:
+          type: integer
+          nullable: true
+          example: 1
+          description: Optional wash package ID
+        bayId:
+          type: integer
+          nullable: true
+          example: 1
+          description: Optional bay ID (must be unoccupied)
+
+    UpdatePhaseRequest:
+      type: object
+      required:
+        - faseActual
+      properties:
+        faseActual:
+          $ref: '#/components/schemas/Phase'
+
+    ErrorDetail:
+      type: object
+      required:
+        - field
+        - message
+      properties:
+        field:
+          type: string
+          example: placa
+        message:
+          type: string
+          example: Placa must be in format XXX-123 (three letters, hyphen, three digits)
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              example: VALIDATION_ERROR
+            message:
+              type: string
+              example: Validation failed
+            details:
+              type: array
+              items:
+                $ref: '#/components/schemas/ErrorDetail'
+
