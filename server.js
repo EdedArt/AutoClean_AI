@@ -4,6 +4,7 @@ const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const env = require('./src/config/env');
+const helmet = require('helmet');
 const prisma = require('./src/config/db');
 const { advanceOrderPhase } = require('./src/services/simulation.service');
 const swaggerUi = require('swagger-ui-express');
@@ -20,13 +21,31 @@ const app = express();
 const PORT = env.PORT;
 const SIMULATION_INTERVAL_MS = 10000; // Check active orders every ~10 seconds
 
+// Disable X-Powered-By header
+app.disable('x-powered-by');
+
+// Security headers with Helmet
+// Relax CSP for Swagger UI (/api/docs) so interactive scripts and styles can load
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/docs')) {
+    return helmet({
+      contentSecurityPolicy: false,
+    })(req, res, next);
+  }
+  return helmet()(req, res, next);
+});
+
 // Middlewares
 app.use(cors());
 app.use(express.json());
 app.use(morgan('dev'));
 
-// Static files for photo evidence
-app.use('/evidence', express.static(path.join(__dirname, 'storage/evidence')));
+// Static files for photo evidence (CORP set to cross-origin for external frontend consumption)
+app.use(
+  '/evidence',
+  helmet.crossOriginResourcePolicy({ policy: 'cross-origin' }),
+  express.static(path.join(__dirname, 'storage/evidence'))
+);
 
 // Swagger API Documentation
 app.get('/api/docs.json', (req, res) => {
