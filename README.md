@@ -1,6 +1,78 @@
 # AutoClean AI — Backend
 
-Backend REST API for **AutoClean AI** (Node.js + Express + Prisma + SQLite).
+## Security & Configuration (Phase 18)
+
+The backend incorporates production-grade HTTP security, Zod-based environment validation, CORS policies optimized for mobile clients, granular rate limiting, and request payload size defenses.
+
+### 1. Environment Variables & Validation
+
+Environment variables are validated on startup via Zod in `src/config/env.js`. If any required variable is missing or invalid, the server logs a detailed error identifying the problem variable and terminates immediately (`exit(1)`).
+
+| Variable | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `PORT` | number | `3000` | Port on which the HTTP server listens |
+| `NODE_ENV` | `development` \| `test` \| `production` | `development` | Runtime environment mode |
+| `DATABASE_URL` | string | *Required* | Prisma connection URI (e.g. `file:./prisma/dev.db`) |
+| `SIMULATION_PHASE_DURATION_MS` | number | `60000` | Duration of each wash cycle phase in ms |
+| `CORS_ORIGINS` | string | `*` | Comma-separated list of allowed origins (or `*` for all) |
+| `RATE_LIMIT_WINDOW_MS` | number | `60000` | Time window for rate limiting in ms |
+| `RATE_LIMIT_MAX` | number | `100` | Max requests per IP in window for `/api` routes |
+| `RATE_LIMIT_EVIDENCE_MAX` | number | `20` | Max requests per IP in window for evidence upload |
+
+---
+
+### 2. CORS Setup for Mobile & Hybrid Clients
+
+* **Native Mobile Apps & CLI (`curl`, Postman):** Send no `Origin` header. Requests without an `Origin` header are **always permitted**.
+* **Web / Hybrid Mobile Apps:** Validated against `CORS_ORIGINS`. If `CORS_ORIGINS=*`, all origins are allowed. If set to a comma-separated list (e.g., `https://mobile.autoclean.com,https://dashboard.autoclean.com`), only requests matching one of the whitelisted origins receive the `Access-Control-Allow-Origin` header.
+* **Allowed Methods:** `GET`, `POST`, `PATCH`, `OPTIONS`.
+* **Allowed Headers:** `Content-Type`, `Authorization` (configured for upcoming JWT token authentication).
+* **Preflight Handling:** Full preflight `OPTIONS` requests handled automatically with HTTP 200/204.
+
+---
+
+### 3. Helmet & HTTP Headers
+
+* **`x-powered-by`:** Disabled across all responses to prevent framework fingerprinting.
+* **Security Headers:** Standard Helmet protection applied globally (e.g., `X-Content-Type-Options: nosniff`).
+* **Swagger UI Exception:** Content-Security-Policy (CSP) is relaxed specifically on `/api/docs` so Swagger UI scripts, inline styles, and web assets render interactively.
+* **Cross-Origin Evidence Access:** `Cross-Origin-Resource-Policy: cross-origin` is applied to `/evidence` static files so that mobile applications and external frontends can render uploaded photos without browser blocking.
+
+---
+
+### 4. Rate Limiting Behavior
+
+* **Global Limiter (`/api/*`):** Allows up to `RATE_LIMIT_MAX` (default 100) requests per `RATE_LIMIT_WINDOW_MS` (default 60 seconds) per IP.
+* **Evidence Upload Limiter:** Stricter limiter on `POST /api/orders/:orderId/evidence` (`RATE_LIMIT_EVIDENCE_MAX`, default 20 req/min) to prevent disk and network abuse.
+* **Exempt Routes:** `GET /api/health` and `/api/docs` are never rate-limited.
+* **Test Mode:** Automatically skipped when `NODE_ENV === "test"` (unless `RATE_LIMIT_MAX` is specifically set low to test rate limiting) to ensure test suites run smoothly.
+* **Unified 429 Response Format:**
+  ```json
+  {
+    "error": {
+      "code": "RATE_LIMITED",
+      "message": "Too many requests, please try again later."
+    }
+  }
+  ```
+* Standard headers `RateLimit-Limit`, `RateLimit-Remaining`, and `RateLimit-Reset` are sent with every response.
+
+---
+
+### 5. Request Body Size Limits
+
+* **JSON Limit:** Express parses JSON bodies up to `100kb` (`express.json({ limit: '100kb' })`).
+* **Payload Too Large (413):** Requests exceeding the limit return HTTP 413 in the unified error format:
+  ```json
+  {
+    "error": {
+      "code": "PAYLOAD_TOO_LARGE",
+      "message": "Request payload exceeds the maximum allowed limit of 100 KB"
+    }
+  }
+  ```
+
+---
 
 ## Search, Filters, Pagination and Bay Summary (Phase 17)
 
