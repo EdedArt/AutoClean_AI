@@ -12,6 +12,7 @@ const tests = [
   path.join(__dirname, 'prediction.test.js'),
   path.join(__dirname, 'validation.test.js'),
   path.join(__dirname, 'errorHandling.test.js'),
+  path.join(__dirname, 'searchFilters.test.js'),
   path.join(__dirname, 'openapi.test.js'),
 ];
 

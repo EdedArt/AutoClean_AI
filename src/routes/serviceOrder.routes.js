@@ -5,6 +5,7 @@ const {
   createOrder: createOrderSchema,
   updatePhase: updatePhaseSchema,
 } = require('../validators/serviceOrder.schema');
+const { orderQuery } = require('../validators/query.schema');
 const {
   getServiceOrders,
   createServiceOrder,
@@ -18,7 +19,7 @@ const {
 
 const router = Router();
 
-router.get('/', getServiceOrders);
+router.get('/', validate(orderQuery, 'query'), getServiceOrders);
 router.get('/track/:placa', validate(placaParam, 'params'), trackOrderByPlaca);
 router.get('/:id/prediction', validate(idParam, 'params'), getOrderPrediction);
 router.post('/', validate(createOrderSchema, 'body'), createServiceOrder);

@@ -43,7 +43,7 @@ async function main() {
     },
   });
 
-  // 4. Create 2 Vehicles
+  // 4. Create Vehicles (at least 8 vehicles for demoing search and pagination)
   const vehicle1 = await prisma.vehicle.create({
     data: {
       placa: 'XYZ-123',
@@ -62,7 +62,61 @@ async function main() {
     },
   });
 
-  // 5. Create 2 Service Orders
+  const vehicle3 = await prisma.vehicle.create({
+    data: {
+      placa: 'DEF-456',
+      marca: 'Chevrolet',
+      modelo: 'Tracker',
+      nivelSuciedad: 'Moderado',
+    },
+  });
+
+  const vehicle4 = await prisma.vehicle.create({
+    data: {
+      placa: 'GHI-789',
+      marca: 'Nissan',
+      modelo: 'Kicks',
+      nivelSuciedad: 'Leve',
+    },
+  });
+
+  const vehicle5 = await prisma.vehicle.create({
+    data: {
+      placa: 'JKL-012',
+      marca: 'Renault',
+      modelo: 'Duster',
+      nivelSuciedad: 'Severo',
+    },
+  });
+
+  const vehicle6 = await prisma.vehicle.create({
+    data: {
+      placa: 'MNO-345',
+      marca: 'Kia',
+      modelo: 'Sportage',
+      nivelSuciedad: 'Moderado',
+    },
+  });
+
+  const vehicle7 = await prisma.vehicle.create({
+    data: {
+      placa: 'PQR-678',
+      marca: 'Ford',
+      modelo: 'Escape',
+      nivelSuciedad: 'Leve',
+    },
+  });
+
+  const vehicle8 = await prisma.vehicle.create({
+    data: {
+      placa: 'STU-901',
+      marca: 'Volkswagen',
+      modelo: 'Tiguan',
+      nivelSuciedad: 'Severo',
+    },
+  });
+
+  // 5. Create Service Orders across different phases (RECIBIDO, LAVADO, SECADO, LISTO)
   await prisma.serviceOrder.create({
     data: {
       vehicleId: vehicle1.id,
@@ -80,6 +134,36 @@ async function main() {
       bayId: bay2.id,
       faseActual: 'SECADO',
       porcentajeProgreso: 80,
+    },
+  });
+
+  await prisma.serviceOrder.create({
+    data: {
+      vehicleId: vehicle3.id,
+      packageId: pkgBasico.id,
+      bayId: null,
+      faseActual: 'RECIBIDO',
+      porcentajeProgreso: 10,
+    },
+  });
+
+  await prisma.serviceOrder.create({
+    data: {
+      vehicleId: vehicle4.id,
+      packageId: pkgProfundo.id,
+      bayId: null,
+      faseActual: 'LISTO',
+      porcentajeProgreso: 100,
+    },
+  });
+
+  await prisma.serviceOrder.create({
+    data: {
+      vehicleId: vehicle5.id,
+      packageId: pkgBasico.id,
+      bayId: null,
+      faseActual: 'RECIBIDO',
+      porcentajeProgreso: 10,
     },
   });
 
