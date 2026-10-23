@@ -18,6 +18,7 @@ const tests = [
   path.join(__dirname, 'searchFilters.test.js'),
   path.join(__dirname, 'openapi.test.js'),
   path.join(__dirname, 'security.test.js'),
+  path.join(__dirname, 'auth.test.js'),
 ];
 
 for (const testFile of tests) {
