@@ -2,6 +2,92 @@
 
 Backend REST API for **AutoClean AI** (Node.js + Express + Prisma + SQLite).
 
+## Search, Filters, Pagination and Bay Summary (Phase 17)
+
+To optimize mobile performance and avoid unbounded queries on client devices, list endpoints return a standard pagination envelope. The API provides robust filtering by phase, bay, plate, search across vehicles, and an operator bay summary badge endpoint.
+
+### Standard Pagination Envelope
+
+`GET /api/vehicles` and `GET /api/orders` wrap their collections in a uniform JSON envelope:
+
+```json
+{
+  "data": [
+    { /* entity record */ }
+  ],
+  "meta": {
+    "page": 1,
+    "limit": 10,
+    "total": 24,
+    "totalPages": 3
+  }
+}
+```
+
+* **Out-of-range pages:** Requesting a page beyond `totalPages` (e.g., `?page=999`) returns HTTP 200 with `data: []` and accurate `meta` counters.
+
+### 1. Vehicle Search & Pagination (`GET /api/vehicles`)
+
+Supports full-text partial search matching license plate (`placa`), make (`marca`), or model (`modelo`) using case-insensitive ASCII LIKE matching, ordered by `createdAt desc`.
+
+* **Query Parameters:**
+  * `page` (optional integer, min: 1, default: `1`)
+  * `limit` (optional integer, min: 1, max: 50, default: `10`)
+  * `search` (optional string, 1 to 20 characters)
+
+**Example cURL:**
+```bash
+# Search vehicles for "maz" with limit 5
+curl "http://localhost:3000/api/vehicles?search=maz&page=1&limit=5"
+```
+
+---
+
+### 2. Order Filters, Sorting & Pagination (`GET /api/orders`)
+
+Supports comprehensive relational filters, phase matching, active order exclusion, timestamp sorting, and pagination.
+
+* **Query Parameters:**
+  * `page` (optional integer, min: 1, default: `1`)
+  * `limit` (optional integer, min: 1, max: 50, default: `10`)
+  * `placa` (optional string, normalized to uppercase, partial match on vehicle plate)
+  * `fase` (optional enum: `"RECIBIDO" | "LAVADO" | "SECADO" | "LISTO"`)
+  * `bayId` (optional positive integer)
+  * `activeOnly` (optional boolean string: `"true"` excludes orders in `LISTO`)
+  * `sort` (optional enum: `"newest" | "oldest"`, default: `"newest"`)
+
+**Example cURLs:**
+```bash
+# Filter active orders in LAVADO phase, newest first
+curl "http://localhost:3000/api/orders?fase=LAVADO&activeOnly=true&sort=newest"
+
+# Filter orders by vehicle plate
+curl "http://localhost:3000/api/orders?placa=XYZ&page=1&limit=10"
+```
+
+---
+
+### 3. Bay Occupancy Summary (`GET /api/bays/summary`)
+
+Provides real-time occupancy statistics from the `Bay` table to feed the operator UI badge (e.g., *"Bahías: 2/4 Ocupadas"*).
+
+* **Endpoint:** `GET /api/bays/summary`
+* **Response (200 OK):**
+  ```json
+  {
+    "total": 4,
+    "occupied": 2,
+    "free": 2
+  }
+  ```
+
+**Example cURL:**
+```bash
+curl http://localhost:3000/api/bays/summary
+```
+
+---
+
 ## Interactive API Documentation with Swagger/OpenAPI (Phase 16)
 
 The API includes comprehensive OpenAPI 3.0.3 documentation with interactive Swagger UI, enabling mobile developers (Android & iOS) to explore, inspect schemas, and test all endpoints without reading backend code.
