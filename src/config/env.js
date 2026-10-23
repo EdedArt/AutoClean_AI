@@ -33,6 +33,12 @@ const envSchema = z.object({
     .int()
     .positive()
     .default(100),
+  JWT_SECRET: z
+    .string({ message: 'JWT_SECRET is required' })
+    .min(32, 'JWT_SECRET must be at least 32 characters long'),
+  JWT_EXPIRES_IN: z
+    .string()
+    .default('1d'),
 });
 
 /**
@@ -91,6 +97,12 @@ const env = {
     return process.env.RATE_LIMIT_MAX
       ? parseInt(process.env.RATE_LIMIT_MAX, 10)
       : parsed.RATE_LIMIT_MAX;
+  },
+  get JWT_SECRET() {
+    return process.env.JWT_SECRET || parsed.JWT_SECRET;
+  },
+  get JWT_EXPIRES_IN() {
+    return process.env.JWT_EXPIRES_IN || parsed.JWT_EXPIRES_IN;
   },
   validateEnv,
   envSchema,
