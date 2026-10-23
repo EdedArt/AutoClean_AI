@@ -268,6 +268,126 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /api/orders/{id}/prediction:
+    get:
+      tags:
+        - Prediction
+      summary: Get AI delivery time prediction
+      description: Calculates estimated delivery time, deterministic accuracy percentage (88-97%), and delay status. Accuracy is 100% if the order is already in phase LISTO.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Numeric identifier of the service order
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: AI delivery time prediction metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Prediction'
+              examples:
+                StandardPrediction:
+                  summary: Active order prediction
+                  value:
+                    estimatedDeliveryTime: '2026-10-23T12:35:00.000Z'
+                    accuracyPercentage: 94
+                    recalculated: false
+                    message: null
+                DelayedPrediction:
+                  summary: Delayed order prediction
+                  value:
+                    estimatedDeliveryTime: '2026-10-23T12:45:00.000Z'
+                    accuracyPercentage: 94
+                    recalculated: true
+                    message: Tiempo recalculado por posible retraso
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/orders/{id}/simulate/advance:
+    post:
+      tags:
+        - Simulation
+      summary: Force advance order to next phase
+      description: Demo control to immediately force an active order to its next phase (RECIBIDO -> LAVADO -> SECADO -> LISTO), updating progress percentage and resetting the simulation timer.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Numeric identifier of the service order
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Order successfully advanced to next phase
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceOrder'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/orders/{id}/simulate/reset:
+    post:
+      tags:
+        - Simulation
+      summary: Reset order back to start
+      description: Demo control to reset an order back to RECIBIDO with 10% progress and restart the background simulation timer.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Numeric identifier of the service order
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Order successfully reset to RECIBIDO
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceOrder'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/orders/{id}/simulate/complete:
+    post:
+      tags:
+        - Simulation
+      summary: Force complete order to LISTO
+      description: Demo control to immediately mark an order as completed (LISTO) with 100% progress.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Numeric identifier of the service order
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Order successfully completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceOrder'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+
 
 components:
   schemas:
