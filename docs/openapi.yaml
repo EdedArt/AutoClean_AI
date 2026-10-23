@@ -28,7 +28,136 @@ tags:
     description: Deterministic AI delivery time estimation with delay detection
   - name: Evidence
     description: Photographic evidence management and upload per order phase
-paths: {}
+paths:
+  /api/health:
+    get:
+      tags:
+        - Health
+      summary: Service health check
+      description: Returns operational status and current server timestamp.
+      responses:
+        '200':
+          description: Service is healthy and operational
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - status
+                  - timestamp
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  timestamp:
+                    type: string
+                    format: date-time
+                    example: '2026-10-23T17:00:00.000Z'
+
+  /api/vehicles:
+    get:
+      tags:
+        - Vehicles
+      summary: List all vehicles
+      description: Returns all registered vehicles in descending order of creation.
+      responses:
+        '200':
+          description: Array of vehicles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Vehicle'
+    post:
+      tags:
+        - Vehicles
+      summary: Register a new vehicle
+      description: Creates a new vehicle. Plate must follow XXX-123 format and is normalized to uppercase.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateVehicleRequest'
+            examples:
+              MazdaCX5:
+                summary: Example Mazda CX-5
+                value:
+                  placa: XYZ-123
+                  marca: Mazda
+                  modelo: CX-5
+                  nivelSuciedad: Moderado
+      responses:
+        '201':
+          description: Vehicle created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Vehicle'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/vehicles/{id}:
+    get:
+      tags:
+        - Vehicles
+      summary: Get vehicle by ID
+      description: Retrieves a single vehicle by its numeric identifier.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Numeric identifier of the vehicle
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Vehicle details found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Vehicle'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/bays:
+    get:
+      tags:
+        - Bays
+      summary: List all bays
+      description: Returns all washing bays ordered by number, including current occupancy status.
+      responses:
+        '200':
+          description: Array of washing bays
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Bay'
+
+  /api/packages:
+    get:
+      tags:
+        - Packages
+      summary: List all packages
+      description: Returns available wash and detailing service packages.
+      responses:
+        '200':
+          description: Array of service packages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Package'
+
 components:
   schemas:
     Phase:
