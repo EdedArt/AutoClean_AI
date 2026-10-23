@@ -128,6 +128,10 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '409':
           $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/RateLimited'
 
   /api/vehicles/{id}:
     get:
@@ -305,6 +309,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/RateLimited'
 
   /api/orders/{id}/phase:
     patch:
@@ -342,6 +350,10 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '404':
           $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/RateLimited'
 
   /api/orders/track/{placa}:
     get:
@@ -534,6 +546,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/RateLimited'
     get:
       tags:
         - Evidence
@@ -1005,17 +1019,54 @@ components:
                   message: Bay is already occupied
 
     PayloadTooLarge:
-      description: Uploaded file exceeds the 5 MB maximum allowed size (413)
+      description: Uploaded file or JSON body exceeds maximum allowed size (413)
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
           examples:
             FileTooLarge:
-              summary: File size limit exceeded
+              summary: Uploaded image exceeds 5 MB limit
               value:
                 error:
                   code: FILE_TOO_LARGE
                   message: File size exceeds maximum allowed limit of 5 MB
+            PayloadTooLarge:
+              summary: Request JSON body exceeds 100 KB limit
+              value:
+                error:
+                  code: PAYLOAD_TOO_LARGE
+                  message: Request payload exceeds the maximum allowed limit of 100 KB
+
+    RateLimited:
+      description: Rate limit exceeded (429)
+      headers:
+        RateLimit-Limit:
+          description: The maximum number of allowed requests in the current period
+          schema:
+            type: integer
+            example: 100
+        RateLimit-Remaining:
+          description: The number of remaining requests in the current period
+          schema:
+            type: integer
+            example: 0
+        RateLimit-Reset:
+          description: The number of seconds until the rate limit resets
+          schema:
+            type: integer
+            example: 60
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            RateLimited:
+              summary: Rate limit quota exceeded
+              value:
+                error:
+                  code: RATE_LIMITED
+                  message: Too many requests, please try again later.
+
 
 
