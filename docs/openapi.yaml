@@ -387,6 +387,80 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /api/orders/{orderId}/evidence:
+    post:
+      tags:
+        - Evidence
+      summary: Upload photo evidence for a service order
+      description: >-
+        Uploads an image evidence file (JPEG, PNG, WEBP, max 5 MB) associated with a service order.
+        An optional `etapa` field can be provided; if omitted, it defaults to the order's current phase.
+        Files are stored in the local filesystem at `storage/evidence` and served statically.
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          description: Numeric identifier of the service order
+          schema:
+            type: integer
+            example: 1
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Photographic image file (JPEG, PNG, WEBP, max 5 MB)
+                etapa:
+                  $ref: '#/components/schemas/Phase'
+                  description: Order phase for the evidence (defaults to order's current phase)
+      responses:
+        '201':
+          description: Photographic evidence uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Evidence'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+    get:
+      tags:
+        - Evidence
+      summary: List all photo evidences for a service order
+      description: Retrieves all photo evidence records for the specified service order ordered by creation date descending.
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          description: Numeric identifier of the service order
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Array of photo evidence records
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Evidence'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+
 
 
 components:
