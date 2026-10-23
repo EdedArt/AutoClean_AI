@@ -60,8 +60,29 @@ const evidenceUploadLimiter = rateLimit({
   handler: rateLimitHandler('Too many evidence upload requests, please try again later.'),
 });
 
+/**
+ * Stricter rate limiter for authentication endpoints (login / register) (default: 10 req/min).
+ */
+const authLimiter = rateLimit({
+  windowMs: env.RATE_LIMIT_WINDOW_MS || 60000,
+  limit: () => (process.env.RATE_LIMIT_AUTH_MAX ? parseInt(process.env.RATE_LIMIT_AUTH_MAX, 10) : 10),
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => {
+    if (
+      env.NODE_ENV === 'test' &&
+      (!process.env.RATE_LIMIT_AUTH_MAX || parseInt(process.env.RATE_LIMIT_AUTH_MAX, 10) >= 10)
+    ) {
+      return true;
+    }
+    return false;
+  },
+  handler: rateLimitHandler('Too many authentication attempts, please try again later.'),
+});
+
 module.exports = {
   globalLimiter,
   evidenceUploadLimiter,
+  authLimiter,
   rateLimitHandler,
 };
