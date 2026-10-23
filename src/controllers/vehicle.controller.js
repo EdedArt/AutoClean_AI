@@ -1,15 +1,36 @@
 const prisma = require('../config/db');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
+const { getPrismaPagination, buildPaginatedResponse } = require('../utils/pagination');
 
 /**
- * Fetch all vehicles
+ * Fetch all vehicles with search and pagination support
  */
 const getVehicles = asyncHandler(async (req, res) => {
-  const vehicles = await prisma.vehicle.findMany({
-    orderBy: { createdAt: 'desc' },
-  });
-  res.status(200).json(vehicles);
+  const { page = 1, limit = 10, search } = req.query || {};
+
+  const where = {};
+  if (search) {
+    where.OR = [
+      { placa: { contains: search } },
+      { marca: { contains: search } },
+      { modelo: { contains: search } },
+    ];
+  }
+
+  const { skip, take } = getPrismaPagination(page, limit);
+
+  const [vehicles, total] = await prisma.$transaction([
+    prisma.vehicle.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take,
+    }),
+    prisma.vehicle.count({ where }),
+  ]);
+
+  res.status(200).json(buildPaginatedResponse(vehicles, total, page, limit));
 });
 
 /**
