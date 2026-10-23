@@ -59,16 +59,45 @@ paths:
       tags:
         - Vehicles
       summary: List all vehicles
-      description: Returns all registered vehicles in descending order of creation.
+      description: Returns registered vehicles with search and pagination support, wrapped in a pagination envelope.
+      parameters:
+        - name: page
+          in: query
+          required: false
+          description: Page number (1-indexed, default 1)
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+            example: 1
+        - name: limit
+          in: query
+          required: false
+          description: Number of vehicles per page (between 1 and 50, default 10)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+            example: 10
+        - name: search
+          in: query
+          required: false
+          description: Search term matching placa, marca, or modelo (case-insensitive ASCII, 1 to 20 chars)
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 20
+            example: maz
       responses:
         '200':
-          description: Array of vehicles
+          description: Paginated envelope with vehicles data and pagination metadata
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Vehicle'
+                $ref: '#/components/schemas/VehicleList'
+        '400':
+          $ref: '#/components/responses/ValidationError'
     post:
       tags:
         - Vehicles
@@ -126,6 +155,20 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /api/bays/summary:
+    get:
+      tags:
+        - Bays
+      summary: Get bay occupancy summary
+      description: Returns counts of total, occupied, and free washing bays.
+      responses:
+        '200':
+          description: Bay occupancy summary counts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaySummary'
+
   /api/bays:
     get:
       tags:
@@ -163,16 +206,74 @@ paths:
       tags:
         - Orders
       summary: List all service orders
-      description: Returns all service orders with nested vehicle, package, and bay data ordered by creation date descending.
+      description: Returns service orders with nested relations, supporting filters (placa, fase, bayId, activeOnly), sorting, and pagination in a standard envelope.
+      parameters:
+        - name: page
+          in: query
+          required: false
+          description: Page number (1-indexed, default 1)
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+            example: 1
+        - name: limit
+          in: query
+          required: false
+          description: Number of orders per page (between 1 and 50, default 10)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+            example: 10
+        - name: placa
+          in: query
+          required: false
+          description: Filter by related vehicle plate (partial or full match, normalized to uppercase)
+          schema:
+            type: string
+            example: XYZ
+        - name: fase
+          in: query
+          required: false
+          description: Filter by exact service phase
+          schema:
+            $ref: '#/components/schemas/Phase'
+        - name: bayId
+          in: query
+          required: false
+          description: Filter by assigned bay numeric ID
+          schema:
+            type: integer
+            minimum: 1
+            example: 1
+        - name: activeOnly
+          in: query
+          required: false
+          description: When true, filters out completed orders (faseActual LISTO)
+          schema:
+            type: boolean
+            example: true
+        - name: sort
+          in: query
+          required: false
+          description: Sort order by creation timestamp (newest or oldest, default newest)
+          schema:
+            type: string
+            enum: [newest, oldest]
+            default: newest
+            example: newest
       responses:
         '200':
-          description: Array of service orders
+          description: Paginated envelope with orders data and pagination metadata
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/ServiceOrder'
+                $ref: '#/components/schemas/OrderList'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
     post:
       tags:
         - Orders
@@ -748,6 +849,78 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/ErrorDetail'
+
+    PaginationMeta:
+      type: object
+      required:
+        - page
+        - limit
+        - total
+        - totalPages
+      properties:
+        page:
+          type: integer
+          minimum: 1
+          example: 1
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 50
+          example: 10
+        total:
+          type: integer
+          minimum: 0
+          example: 25
+        totalPages:
+          type: integer
+          minimum: 0
+          example: 3
+
+    VehicleList:
+      type: object
+      required:
+        - data
+        - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Vehicle'
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    OrderList:
+      type: object
+      required:
+        - data
+        - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ServiceOrder'
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    BaySummary:
+      type: object
+      required:
+        - total
+        - occupied
+        - free
+      properties:
+        total:
+          type: integer
+          example: 4
+          description: Total number of washing bays
+        occupied:
+          type: integer
+          example: 2
+          description: Number of bays currently occupied
+        free:
+          type: integer
+          example: 2
+          description: Number of bays currently available
 
   responses:
     ValidationError:
