@@ -158,6 +158,117 @@ paths:
                 items:
                   $ref: '#/components/schemas/Package'
 
+  /api/orders:
+    get:
+      tags:
+        - Orders
+      summary: List all service orders
+      description: Returns all service orders with nested vehicle, package, and bay data ordered by creation date descending.
+      responses:
+        '200':
+          description: Array of service orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ServiceOrder'
+    post:
+      tags:
+        - Orders
+      summary: Create a new service order
+      description: Creates a new service order. If a bay is selected, it must not be currently occupied.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+            examples:
+              StandardOrder:
+                summary: New order with vehicle, package, and bay
+                value:
+                  vehicleId: 1
+                  packageId: 1
+                  bayId: 1
+      responses:
+        '201':
+          description: Service order created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceOrder'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/orders/{id}/phase:
+    patch:
+      tags:
+        - Orders
+      summary: Update service order phase
+      description: Advances or updates the current phase and automatically updates progress percentage (RECIBIDO=10%, LAVADO=45%, SECADO=80%, LISTO=100%).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Numeric identifier of the service order
+          schema:
+            type: integer
+            example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePhaseRequest'
+            examples:
+              LavadoPhase:
+                summary: Move to LAVADO phase
+                value:
+                  faseActual: LAVADO
+      responses:
+        '200':
+          description: Order phase updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceOrder'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/orders/track/{placa}:
+    get:
+      tags:
+        - Orders
+      summary: Track latest order by vehicle plate
+      description: Retrieves the most recent service order for a given vehicle plate (XXX-123) including embedded AI delivery time prediction.
+      parameters:
+        - name: placa
+          in: path
+          required: true
+          description: License plate to track (e.g. XYZ-123)
+          schema:
+            type: string
+            example: XYZ-123
+      responses:
+        '200':
+          description: Service order tracking details with prediction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackedOrder'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+
 components:
   schemas:
     Phase:
