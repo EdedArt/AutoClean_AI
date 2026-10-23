@@ -15,6 +15,7 @@ const bayRoutes = require('./src/routes/bay.routes');
 const packageRoutes = require('./src/routes/package.routes');
 const serviceOrderRoutes = require('./src/routes/serviceOrder.routes');
 const evidenceRoutes = require('./src/routes/evidence.routes');
+const authRoutes = require('./src/routes/auth.routes');
 const { notFoundHandler, errorHandler } = require('./src/middlewares/error.middleware');
 
 const app = express();
@@ -98,6 +99,7 @@ app.use('/api', globalLimiter);
 
 // Routes
 app.use('/api/health', healthRoutes);
+app.use('/api/auth', authRoutes);
 app.use('/api/vehicles', vehicleRoutes);
 app.use('/api/bays', bayRoutes);
 app.use('/api/packages', packageRoutes);
