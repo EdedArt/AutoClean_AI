@@ -72,6 +72,23 @@ async function runIntegrationTest() {
   assert.strictEqual(order.faseActual, 'RECIBIDO');
   console.log(`✅ Order #${order.id} created in RECIBIDO for vehicle ${testPlaca}`);
 
+  // 2b. Verify paginated envelope on GET /api/vehicles and GET /api/orders
+  const vListRes = await makeRequest('GET', '/api/vehicles');
+  assert.strictEqual(vListRes.status, 200);
+  assert.ok(Array.isArray(vListRes.body.data), 'GET /api/vehicles data must be an array');
+  assert.strictEqual(typeof vListRes.body.meta.total, 'number');
+  assert.strictEqual(typeof vListRes.body.meta.totalPages, 'number');
+  assert.ok(vListRes.body.data.some((v) => v.id === vehicle.id));
+
+  const oListRes = await makeRequest('GET', '/api/orders');
+  assert.strictEqual(oListRes.status, 200);
+  assert.ok(Array.isArray(oListRes.body.data), 'GET /api/orders data must be an array');
+  assert.strictEqual(typeof oListRes.body.meta.total, 'number');
+  assert.strictEqual(typeof oListRes.body.meta.totalPages, 'number');
+  assert.ok(oListRes.body.data.some((o) => o.id === order.id));
+  console.log('✅ Paginated envelope { data, meta } verified for vehicles and orders lists');
+
+
   // 3. Test tracking endpoint initially
   const trackInitial = await makeRequest('GET', `/api/orders/track/${testPlaca}`);
   assert.strictEqual(trackInitial.status, 200);
