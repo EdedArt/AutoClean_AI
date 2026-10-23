@@ -315,3 +315,100 @@ components:
               items:
                 $ref: '#/components/schemas/ErrorDetail'
 
+  responses:
+    ValidationError:
+      description: Bad request due to validation errors, malformed payload, or invalid file type (400)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            ValidationError:
+              summary: Zod field validation error
+              value:
+                error:
+                  code: VALIDATION_ERROR
+                  message: Validation failed
+                  details:
+                    - field: placa
+                      message: Placa must be in format XXX-123 (three letters, hyphen, three digits)
+            InvalidJson:
+              summary: Malformed JSON in request body
+              value:
+                error:
+                  code: INVALID_JSON
+                  message: Malformed JSON in request body
+            InvalidFileType:
+              summary: Unsupported image MIME type
+              value:
+                error:
+                  code: INVALID_FILE_TYPE
+                  message: Solo se permiten archivos de imagen (JPEG, PNG, WEBP)
+            FileMissing:
+              summary: Missing file in multipart form
+              value:
+                error:
+                  code: FILE_MISSING
+                  message: No se ha proporcionado ningún archivo de imagen
+            OrderCompleted:
+              summary: Cannot advance already completed order
+              value:
+                error:
+                  code: ORDER_COMPLETED
+                  message: Order is already completed.
+
+    NotFound:
+      description: Resource or route not found (404)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            ResourceNotFound:
+              summary: Entity not found in database
+              value:
+                error:
+                  code: NOT_FOUND
+                  message: Service order not found
+            RouteNotFound:
+              summary: Unmatched API route
+              value:
+                error:
+                  code: ROUTE_NOT_FOUND
+                  message: Route GET /api/orders/999/unknown not found
+
+    Conflict:
+      description: Business conflict or unique constraint violation (409)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            DuplicateResource:
+              summary: Unique constraint violation (e.g. placa)
+              value:
+                error:
+                  code: DUPLICATE_RESOURCE
+                  message: A resource with this placa already exists
+            BayOccupied:
+              summary: Selected bay is already occupied
+              value:
+                error:
+                  code: BAY_OCCUPIED
+                  message: Bay is already occupied
+
+    PayloadTooLarge:
+      description: Uploaded file exceeds the 5 MB maximum allowed size (413)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            FileTooLarge:
+              summary: File size limit exceeded
+              value:
+                error:
+                  code: FILE_TOO_LARGE
+                  message: File size exceeds maximum allowed limit of 5 MB
+
+
