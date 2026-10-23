@@ -92,6 +92,11 @@ app.use(
   })
 );
 
+const { globalLimiter } = require('./src/middlewares/rateLimit.middleware');
+
+// Apply global rate limiter to all /api routes (skips /api/health and /api/docs)
+app.use('/api', globalLimiter);
+
 // Routes
 app.use('/api/health', healthRoutes);
 app.use('/api/vehicles', vehicleRoutes);
