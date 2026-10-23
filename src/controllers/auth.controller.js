@@ -82,7 +82,27 @@ const login = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Returns currently authenticated user profile
+ */
+const getMe = asyncHandler(async (req, res) => {
+  const user = req.user;
+  const userResponse = {
+    id: user.id,
+    nombre: user.nombre,
+    email: user.email,
+    rol: user.rol,
+    createdAt: user.createdAt,
+  };
+
+  res.status(200).json({
+    user: userResponse,
+    ...userResponse,
+  });
+});
+
 module.exports = {
   register,
   login,
+  getMe,
 };
