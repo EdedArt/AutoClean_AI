@@ -3,6 +3,7 @@ const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
+const env = require('./src/config/env');
 const prisma = require('./src/config/db');
 const { advanceOrderPhase } = require('./src/services/simulation.service');
 const swaggerUi = require('swagger-ui-express');
@@ -16,7 +17,7 @@ const evidenceRoutes = require('./src/routes/evidence.routes');
 const { notFoundHandler, errorHandler } = require('./src/middlewares/error.middleware');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = env.PORT;
 const SIMULATION_INTERVAL_MS = 10000; // Check active orders every ~10 seconds
 
 // Middlewares
