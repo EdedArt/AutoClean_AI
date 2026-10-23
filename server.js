@@ -3,6 +3,8 @@ const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
+const env = require('./src/config/env');
+const helmet = require('helmet');
 const prisma = require('./src/config/db');
 const { advanceOrderPhase } = require('./src/services/simulation.service');
 const swaggerUi = require('swagger-ui-express');
@@ -16,16 +18,65 @@ const evidenceRoutes = require('./src/routes/evidence.routes');
 const { notFoundHandler, errorHandler } = require('./src/middlewares/error.middleware');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = env.PORT;
 const SIMULATION_INTERVAL_MS = 10000; // Check active orders every ~10 seconds
 
-// Middlewares
-app.use(cors());
-app.use(express.json());
+// Disable X-Powered-By header
+app.disable('x-powered-by');
+
+// Security headers with Helmet
+// Relax CSP for Swagger UI (/api/docs) so interactive scripts and styles can load
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/docs')) {
+    return helmet({
+      contentSecurityPolicy: false,
+    })(req, res, next);
+  }
+  return helmet()(req, res, next);
+});
+
+// CORS configuration driven by CORS_ORIGINS
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Requests with no Origin header (native mobile apps, curl, server-to-server) are always allowed
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    const currentCors = env.CORS_ORIGINS || '*';
+    if (currentCors === '*') {
+      return callback(null, true);
+    }
+
+    const allowedOrigins = currentCors
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean);
+
+    if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+      return callback(null, true);
+    }
+
+    // Origin not allowed: omit Access-Control-Allow-Origin
+    return callback(null, false);
+  },
+  methods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  optionsSuccessStatus: 200,
+};
+
+app.use(cors(corsOptions));
+
+app.use(express.json({ limit: '100kb' }));
 app.use(morgan('dev'));
 
-// Static files for photo evidence
-app.use('/evidence', express.static(path.join(__dirname, 'storage/evidence')));
+// Static files for photo evidence (CORP set to cross-origin for external frontend consumption)
+app.use(
+  '/evidence',
+  helmet.crossOriginResourcePolicy({ policy: 'cross-origin' }),
+  express.static(path.join(__dirname, 'storage/evidence'))
+);
 
 // Swagger API Documentation
 app.get('/api/docs.json', (req, res) => {
@@ -39,6 +90,11 @@ app.use(
     customSiteTitle: 'AutoClean AI API',
   })
 );
+
+const { globalLimiter } = require('./src/middlewares/rateLimit.middleware');
+
+// Apply global rate limiter to all /api routes (skips /api/health and /api/docs)
+app.use('/api', globalLimiter);
 
 // Routes
 app.use('/api/health', healthRoutes);

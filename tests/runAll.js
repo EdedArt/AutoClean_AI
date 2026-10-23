@@ -5,6 +5,8 @@ console.log('====================================');
 console.log('Running AutoClean AI Backend Tests');
 console.log('====================================\n');
 
+process.env.NODE_ENV = 'test';
+
 const tests = [
   path.join(__dirname, 'simulation.test.js'),
   path.join(__dirname, 'integration.test.js'),
@@ -14,11 +16,15 @@ const tests = [
   path.join(__dirname, 'errorHandling.test.js'),
   path.join(__dirname, 'searchFilters.test.js'),
   path.join(__dirname, 'openapi.test.js'),
+  path.join(__dirname, 'security.test.js'),
 ];
 
 for (const testFile of tests) {
   console.log(`▶ Executing: ${path.basename(testFile)}`);
-  const result = spawnSync('node', [testFile], { stdio: 'inherit' });
+  const result = spawnSync('node', [testFile], {
+    stdio: 'inherit',
+    env: { ...process.env, NODE_ENV: 'test' },
+  });
   if (result.status !== 0) {
     console.error(`\n❌ Test failed: ${path.basename(testFile)}`);
     process.exit(result.status || 1);

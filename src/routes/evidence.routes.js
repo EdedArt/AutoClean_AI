@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const upload = require('../middlewares/upload.middleware');
 const { validate } = require('../middlewares/validate.middleware');
+const { evidenceUploadLimiter } = require('../middlewares/rateLimit.middleware');
 const { orderIdParam } = require('../validators/common.schema');
 const { uploadEvidence: uploadEvidenceSchema } = require('../validators/evidence.schema');
 const {
@@ -25,6 +26,7 @@ const handleUpload = (req, res, next) => {
 
 router.post(
   '/:orderId/evidence',
+  evidenceUploadLimiter,
   validate(orderIdParam, 'params'),
   handleUpload,
   validate(uploadEvidenceSchema, 'body'),

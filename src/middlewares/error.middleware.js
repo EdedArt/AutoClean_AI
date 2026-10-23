@@ -47,6 +47,14 @@ const errorHandler = (err, req, res, next) => {
     statusCode = 413;
     code = 'FILE_TOO_LARGE';
     message = 'File size exceeds maximum allowed limit of 5 MB';
+  } else if (
+    err.type === 'entity.too.large' ||
+    err.code === 'PAYLOAD_TOO_LARGE' ||
+    (err.status === 413 && err.type === 'entity.too.large')
+  ) {
+    statusCode = 413;
+    code = 'PAYLOAD_TOO_LARGE';
+    message = 'Request payload exceeds the maximum allowed limit of 100 KB';
   } else if (err.name === 'MulterError') {
     statusCode = 400;
     code = 'FILE_UPLOAD_ERROR';
