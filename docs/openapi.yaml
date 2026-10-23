@@ -1,0 +1,31 @@
+openapi: 3.0.3
+info:
+  title: AutoClean AI API
+  version: 1.0.0
+  description: >-
+    REST API for the AutoClean AI smart car wash management system.
+    Includes full vehicle lifecycle tracking, bay assignment, simulated car wash phases
+    (RECIBIDO, LAVADO, SECADO, LISTO) with an automated background scheduler,
+    manual demo controls for presentations, deterministic AI delivery time predictions,
+    and photographic evidence upload per service phase.
+servers:
+  - url: http://localhost:3000
+    description: Local development server
+tags:
+  - name: Health
+    description: Service health and readiness status
+  - name: Vehicles
+    description: Vehicle catalog and registration with plate validation (XXX-123)
+  - name: Bays
+    description: Washing bays availability and occupancy status
+  - name: Packages
+    description: Wash and detailing service packages
+  - name: Orders
+    description: Service order lifecycle management and phase tracking
+  - name: Simulation
+    description: Demo controls for real-time phase overrides and simulation controls
+  - name: Prediction
+    description: Deterministic AI delivery time estimation with delay detection
+  - name: Evidence
+    description: Photographic evidence management and upload per order phase
+paths: {}
