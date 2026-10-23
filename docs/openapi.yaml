@@ -1,0 +1,848 @@
+openapi: 3.0.3
+info:
+  title: AutoClean AI API
+  version: 1.0.0
+  description: >-
+    REST API for the AutoClean AI smart car wash management system.
+    Includes full vehicle lifecycle tracking, bay assignment, simulated car wash phases
+    (RECIBIDO, LAVADO, SECADO, LISTO) with an automated background scheduler,
+    manual demo controls for presentations, deterministic AI delivery time predictions,
+    and photographic evidence upload per service phase.
+servers:
+  - url: http://localhost:3000
+    description: Local development server
+tags:
+  - name: Health
+    description: Service health and readiness status
+  - name: Vehicles
+    description: Vehicle catalog and registration with plate validation (XXX-123)
+  - name: Bays
+    description: Washing bays availability and occupancy status
+  - name: Packages
+    description: Wash and detailing service packages
+  - name: Orders
+    description: Service order lifecycle management and phase tracking
+  - name: Simulation
+    description: Demo controls for real-time phase overrides and simulation controls
+  - name: Prediction
+    description: Deterministic AI delivery time estimation with delay detection
+  - name: Evidence
+    description: Photographic evidence management and upload per order phase
+paths:
+  /api/health:
+    get:
+      tags:
+        - Health
+      summary: Service health check
+      description: Returns operational status and current server timestamp.
+      responses:
+        '200':
+          description: Service is healthy and operational
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - status
+                  - timestamp
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  timestamp:
+                    type: string
+                    format: date-time
+                    example: '2026-10-23T17:00:00.000Z'
+
+  /api/vehicles:
+    get:
+      tags:
+        - Vehicles
+      summary: List all vehicles
+      description: Returns all registered vehicles in descending order of creation.
+      responses:
+        '200':
+          description: Array of vehicles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Vehicle'
+    post:
+      tags:
+        - Vehicles
+      summary: Register a new vehicle
+      description: Creates a new vehicle. Plate must follow XXX-123 format and is normalized to uppercase.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateVehicleRequest'
+            examples:
+              MazdaCX5:
+                summary: Example Mazda CX-5
+                value:
+                  placa: XYZ-123
+                  marca: Mazda
+                  modelo: CX-5
+                  nivelSuciedad: Moderado
+      responses:
+        '201':
+          description: Vehicle created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Vehicle'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/vehicles/{id}:
+    get:
+      tags:
+        - Vehicles
+      summary: Get vehicle by ID
+      description: Retrieves a single vehicle by its numeric identifier.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Numeric identifier of the vehicle
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Vehicle details found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Vehicle'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/bays:
+    get:
+      tags:
+        - Bays
+      summary: List all bays
+      description: Returns all washing bays ordered by number, including current occupancy status.
+      responses:
+        '200':
+          description: Array of washing bays
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Bay'
+
+  /api/packages:
+    get:
+      tags:
+        - Packages
+      summary: List all packages
+      description: Returns available wash and detailing service packages.
+      responses:
+        '200':
+          description: Array of service packages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Package'
+
+  /api/orders:
+    get:
+      tags:
+        - Orders
+      summary: List all service orders
+      description: Returns all service orders with nested vehicle, package, and bay data ordered by creation date descending.
+      responses:
+        '200':
+          description: Array of service orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ServiceOrder'
+    post:
+      tags:
+        - Orders
+      summary: Create a new service order
+      description: Creates a new service order. If a bay is selected, it must not be currently occupied.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+            examples:
+              StandardOrder:
+                summary: New order with vehicle, package, and bay
+                value:
+                  vehicleId: 1
+                  packageId: 1
+                  bayId: 1
+      responses:
+        '201':
+          description: Service order created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceOrder'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/orders/{id}/phase:
+    patch:
+      tags:
+        - Orders
+      summary: Update service order phase
+      description: Advances or updates the current phase and automatically updates progress percentage (RECIBIDO=10%, LAVADO=45%, SECADO=80%, LISTO=100%).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Numeric identifier of the service order
+          schema:
+            type: integer
+            example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePhaseRequest'
+            examples:
+              LavadoPhase:
+                summary: Move to LAVADO phase
+                value:
+                  faseActual: LAVADO
+      responses:
+        '200':
+          description: Order phase updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceOrder'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/orders/track/{placa}:
+    get:
+      tags:
+        - Orders
+      summary: Track latest order by vehicle plate
+      description: Retrieves the most recent service order for a given vehicle plate (XXX-123) including embedded AI delivery time prediction.
+      parameters:
+        - name: placa
+          in: path
+          required: true
+          description: License plate to track (e.g. XYZ-123)
+          schema:
+            type: string
+            example: XYZ-123
+      responses:
+        '200':
+          description: Service order tracking details with prediction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackedOrder'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/orders/{id}/prediction:
+    get:
+      tags:
+        - Prediction
+      summary: Get AI delivery time prediction
+      description: Calculates estimated delivery time, deterministic accuracy percentage (88-97%), and delay status. Accuracy is 100% if the order is already in phase LISTO.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Numeric identifier of the service order
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: AI delivery time prediction metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Prediction'
+              examples:
+                StandardPrediction:
+                  summary: Active order prediction
+                  value:
+                    estimatedDeliveryTime: '2026-10-23T12:35:00.000Z'
+                    accuracyPercentage: 94
+                    recalculated: false
+                    message: null
+                DelayedPrediction:
+                  summary: Delayed order prediction
+                  value:
+                    estimatedDeliveryTime: '2026-10-23T12:45:00.000Z'
+                    accuracyPercentage: 94
+                    recalculated: true
+                    message: Tiempo recalculado por posible retraso
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/orders/{id}/simulate/advance:
+    post:
+      tags:
+        - Simulation
+      summary: Force advance order to next phase
+      description: Demo control to immediately force an active order to its next phase (RECIBIDO -> LAVADO -> SECADO -> LISTO), updating progress percentage and resetting the simulation timer.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Numeric identifier of the service order
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Order successfully advanced to next phase
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceOrder'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/orders/{id}/simulate/reset:
+    post:
+      tags:
+        - Simulation
+      summary: Reset order back to start
+      description: Demo control to reset an order back to RECIBIDO with 10% progress and restart the background simulation timer.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Numeric identifier of the service order
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Order successfully reset to RECIBIDO
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceOrder'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/orders/{id}/simulate/complete:
+    post:
+      tags:
+        - Simulation
+      summary: Force complete order to LISTO
+      description: Demo control to immediately mark an order as completed (LISTO) with 100% progress.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Numeric identifier of the service order
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Order successfully completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceOrder'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/orders/{orderId}/evidence:
+    post:
+      tags:
+        - Evidence
+      summary: Upload photo evidence for a service order
+      description: >-
+        Uploads an image evidence file (JPEG, PNG, WEBP, max 5 MB) associated with a service order.
+        An optional `etapa` field can be provided; if omitted, it defaults to the order's current phase.
+        Files are stored in the local filesystem at `storage/evidence` and served statically.
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          description: Numeric identifier of the service order
+          schema:
+            type: integer
+            example: 1
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Photographic image file (JPEG, PNG, WEBP, max 5 MB)
+                etapa:
+                  $ref: '#/components/schemas/Phase'
+                  description: Order phase for the evidence (defaults to order's current phase)
+      responses:
+        '201':
+          description: Photographic evidence uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Evidence'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+    get:
+      tags:
+        - Evidence
+      summary: List all photo evidences for a service order
+      description: Retrieves all photo evidence records for the specified service order ordered by creation date descending.
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          description: Numeric identifier of the service order
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Array of photo evidence records
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Evidence'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+
+
+
+components:
+  schemas:
+    Phase:
+      type: string
+      enum:
+        - RECIBIDO
+        - LAVADO
+        - SECADO
+        - LISTO
+      description: Canonical car wash service phases
+      example: LAVADO
+
+    Vehicle:
+      type: object
+      required:
+        - id
+        - placa
+        - marca
+        - modelo
+        - nivelSuciedad
+        - createdAt
+      properties:
+        id:
+          type: integer
+          example: 1
+        placa:
+          type: string
+          example: XYZ-123
+          description: Unique license plate in format XXX-123
+        marca:
+          type: string
+          example: Mazda
+        modelo:
+          type: string
+          example: CX-5
+        nivelSuciedad:
+          type: string
+          enum: [Leve, Moderado, Severo]
+          example: Moderado
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-10-23T12:00:00.000Z'
+
+    Bay:
+      type: object
+      required:
+        - id
+        - numero
+        - ocupada
+      properties:
+        id:
+          type: integer
+          example: 1
+        numero:
+          type: integer
+          example: 1
+        ocupada:
+          type: boolean
+          example: false
+
+    Package:
+      type: object
+      required:
+        - id
+        - nombre
+        - descripcion
+      properties:
+        id:
+          type: integer
+          example: 1
+        nombre:
+          type: string
+          example: Lavado Premium
+        descripcion:
+          type: string
+          example: Lavado exterior a presión, aspirado profundo y encerado
+        precio:
+          type: number
+          format: float
+          nullable: true
+          example: 35000.0
+
+    Prediction:
+      type: object
+      required:
+        - estimatedDeliveryTime
+        - accuracyPercentage
+        - recalculated
+        - message
+      properties:
+        estimatedDeliveryTime:
+          type: string
+          format: date-time
+          example: '2026-10-23T12:35:00.000Z'
+        accuracyPercentage:
+          type: integer
+          minimum: 88
+          maximum: 100
+          example: 94
+        recalculated:
+          type: boolean
+          example: false
+        message:
+          type: string
+          nullable: true
+          example: null
+
+    Evidence:
+      type: object
+      required:
+        - id
+        - url
+        - etapa
+        - serviceOrderId
+        - createdAt
+      properties:
+        id:
+          type: integer
+          example: 1
+        url:
+          type: string
+          example: /evidence/1729700000000-123456789.jpg
+          description: Relative path to access the stored image
+        etapa:
+          type: string
+          example: LAVADO
+          description: Service phase during which the photo was captured
+        serviceOrderId:
+          type: integer
+          example: 1
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-10-23T12:15:00.000Z'
+
+    ServiceOrder:
+      type: object
+      required:
+        - id
+        - vehicleId
+        - faseActual
+        - porcentajeProgreso
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: integer
+          example: 1
+        vehicleId:
+          type: integer
+          example: 1
+        packageId:
+          type: integer
+          nullable: true
+          example: 1
+        bayId:
+          type: integer
+          nullable: true
+          example: 1
+        faseActual:
+          $ref: '#/components/schemas/Phase'
+        porcentajeProgreso:
+          type: integer
+          minimum: 0
+          maximum: 100
+          example: 45
+        horaEstimadaEntrega:
+          type: string
+          format: date-time
+          nullable: true
+          example: null
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-10-23T12:00:00.000Z'
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2026-10-23T12:15:00.000Z'
+        vehicle:
+          $ref: '#/components/schemas/Vehicle'
+        package:
+          allOf:
+            - $ref: '#/components/schemas/Package'
+          nullable: true
+        bay:
+          allOf:
+            - $ref: '#/components/schemas/Bay'
+          nullable: true
+
+    TrackedOrder:
+      allOf:
+        - $ref: '#/components/schemas/ServiceOrder'
+        - type: object
+          properties:
+            prediction:
+              $ref: '#/components/schemas/Prediction'
+
+    CreateVehicleRequest:
+      type: object
+      required:
+        - placa
+        - marca
+        - modelo
+        - nivelSuciedad
+      properties:
+        placa:
+          type: string
+          pattern: '^[A-Za-z]{3}-[0-9]{3}$'
+          example: XYZ-123
+          description: License plate format XXX-123 (automatically uppercase normalized)
+        marca:
+          type: string
+          example: Mazda
+        modelo:
+          type: string
+          example: CX-5
+        nivelSuciedad:
+          type: string
+          enum: [Leve, Moderado, Severo]
+          example: Moderado
+
+    CreateOrderRequest:
+      type: object
+      required:
+        - vehicleId
+      properties:
+        vehicleId:
+          type: integer
+          example: 1
+          description: ID of registered vehicle
+        packageId:
+          type: integer
+          nullable: true
+          example: 1
+          description: Optional wash package ID
+        bayId:
+          type: integer
+          nullable: true
+          example: 1
+          description: Optional bay ID (must be unoccupied)
+
+    UpdatePhaseRequest:
+      type: object
+      required:
+        - faseActual
+      properties:
+        faseActual:
+          $ref: '#/components/schemas/Phase'
+
+    ErrorDetail:
+      type: object
+      required:
+        - field
+        - message
+      properties:
+        field:
+          type: string
+          example: placa
+        message:
+          type: string
+          example: Placa must be in format XXX-123 (three letters, hyphen, three digits)
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              example: VALIDATION_ERROR
+            message:
+              type: string
+              example: Validation failed
+            details:
+              type: array
+              items:
+                $ref: '#/components/schemas/ErrorDetail'
+
+  responses:
+    ValidationError:
+      description: Bad request due to validation errors, malformed payload, or invalid file type (400)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            ValidationError:
+              summary: Zod field validation error
+              value:
+                error:
+                  code: VALIDATION_ERROR
+                  message: Validation failed
+                  details:
+                    - field: placa
+                      message: Placa must be in format XXX-123 (three letters, hyphen, three digits)
+            InvalidJson:
+              summary: Malformed JSON in request body
+              value:
+                error:
+                  code: INVALID_JSON
+                  message: Malformed JSON in request body
+            InvalidFileType:
+              summary: Unsupported image MIME type
+              value:
+                error:
+                  code: INVALID_FILE_TYPE
+                  message: Solo se permiten archivos de imagen (JPEG, PNG, WEBP)
+            FileMissing:
+              summary: Missing file in multipart form
+              value:
+                error:
+                  code: FILE_MISSING
+                  message: No se ha proporcionado ningún archivo de imagen
+            OrderCompleted:
+              summary: Cannot advance already completed order
+              value:
+                error:
+                  code: ORDER_COMPLETED
+                  message: Order is already completed.
+
+    NotFound:
+      description: Resource or route not found (404)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            ResourceNotFound:
+              summary: Entity not found in database
+              value:
+                error:
+                  code: NOT_FOUND
+                  message: Service order not found
+            RouteNotFound:
+              summary: Unmatched API route
+              value:
+                error:
+                  code: ROUTE_NOT_FOUND
+                  message: Route GET /api/orders/999/unknown not found
+
+    Conflict:
+      description: Business conflict or unique constraint violation (409)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            DuplicateResource:
+              summary: Unique constraint violation (e.g. placa)
+              value:
+                error:
+                  code: DUPLICATE_RESOURCE
+                  message: A resource with this placa already exists
+            BayOccupied:
+              summary: Selected bay is already occupied
+              value:
+                error:
+                  code: BAY_OCCUPIED
+                  message: Bay is already occupied
+
+    PayloadTooLarge:
+      description: Uploaded file exceeds the 5 MB maximum allowed size (413)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            FileTooLarge:
+              summary: File size limit exceeded
+              value:
+                error:
+                  code: FILE_TOO_LARGE
+                  message: File size exceeds maximum allowed limit of 5 MB
+
+

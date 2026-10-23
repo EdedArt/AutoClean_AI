@@ -5,6 +5,8 @@ const cors = require('cors');
 const morgan = require('morgan');
 const prisma = require('./src/config/db');
 const { advanceOrderPhase } = require('./src/services/simulation.service');
+const swaggerUi = require('swagger-ui-express');
+const swaggerSpec = require('./src/config/swagger');
 const healthRoutes = require('./src/routes/health.routes');
 const vehicleRoutes = require('./src/routes/vehicle.routes');
 const bayRoutes = require('./src/routes/bay.routes');
@@ -25,6 +27,19 @@ app.use(morgan('dev'));
 // Static files for photo evidence
 app.use('/evidence', express.static(path.join(__dirname, 'storage/evidence')));
 
+// Swagger API Documentation
+app.get('/api/docs.json', (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.send(swaggerSpec);
+});
+app.use(
+  '/api/docs',
+  swaggerUi.serve,
+  swaggerUi.setup(swaggerSpec, {
+    customSiteTitle: 'AutoClean AI API',
+  })
+);
+
 // Routes
 app.use('/api/health', healthRoutes);
 app.use('/api/vehicles', vehicleRoutes);
@@ -32,6 +47,7 @@ app.use('/api/bays', bayRoutes);
 app.use('/api/packages', packageRoutes);
 app.use('/api/orders', serviceOrderRoutes);
 app.use('/api/orders', evidenceRoutes);
+
 
 // Centralized 404 and error handling middlewares
 app.use(notFoundHandler);

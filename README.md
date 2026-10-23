@@ -2,6 +2,76 @@
 
 Backend REST API for **AutoClean AI** (Node.js + Express + Prisma + SQLite).
 
+## Interactive API Documentation with Swagger/OpenAPI (Phase 16)
+
+The API includes comprehensive OpenAPI 3.0.3 documentation with interactive Swagger UI, enabling mobile developers (Android & iOS) to explore, inspect schemas, and test all endpoints without reading backend code.
+
+* **Interactive Swagger UI:** [http://localhost:3000/api/docs](http://localhost:3000/api/docs)
+* **Raw OpenAPI 3.0 JSON Spec:** [http://localhost:3000/api/docs.json](http://localhost:3000/api/docs.json)
+
+### How to Try the Car Wash Simulation from Swagger UI
+
+Open [http://localhost:3000/api/docs](http://localhost:3000/api/docs) in your browser and follow this step-by-step interactive workflow:
+
+1. **Register a Vehicle (`POST /api/vehicles`):**
+   * Expand the `POST /api/vehicles` endpoint under the **Vehicles** tag and click **Try it out**.
+   * Use the sample payload (plate in `XXX-123` format):
+     ```json
+     {
+       "placa": "XYZ-123",
+       "marca": "Mazda",
+       "modelo": "CX-5",
+       "nivelSuciedad": "Moderado"
+     }
+     ```
+   * Click **Execute**. Verify the `201 Created` response and note the returned vehicle `id` (e.g. `1`).
+
+2. **Create a Service Order (`POST /api/orders`):**
+   * Expand `POST /api/orders` under the **Orders** tag and click **Try it out**.
+   * Assign the vehicle to an available bay and package:
+     ```json
+     {
+       "vehicleId": 1,
+       "packageId": 1,
+       "bayId": 1
+     }
+     ```
+   * Click **Execute**. The order is created in initial phase `"RECIBIDO"` with `10%` progress. Note the order `id`.
+
+3. **Advance Phase via Demo Controls (`POST /api/orders/{id}/simulate/advance`):**
+   * Expand `POST /api/orders/{id}/simulate/advance` under the **Simulation** tag and click **Try it out**.
+   * Enter the order `id` and click **Execute**.
+   * The order immediately advances to `"LAVADO"` with `45%` progress, resetting the background simulation timer.
+
+4. **Upload Photo Evidence (`POST /api/orders/{orderId}/evidence`):**
+   * Expand `POST /api/orders/{orderId}/evidence` under the **Evidence** tag and click **Try it out**.
+   * Enter the order `id`, choose an image file (JPEG, PNG, or WEBP under 5 MB) via the file picker, and set `etapa` to `"LAVADO"`.
+   * Click **Execute** and verify the `201 Created` response with the static image URL.
+
+5. **Track Vehicle with AI Prediction (`GET /api/orders/track/{placa}`):**
+   * Expand `GET /api/orders/track/{placa}` under the **Orders** tag and click **Try it out**.
+   * Enter plate `"XYZ-123"` and click **Execute**.
+   * Inspect the returned payload containing the vehicle, bay, package, current progress, and embedded `prediction`:
+     ```json
+     {
+       "id": 1,
+       "faseActual": "LAVADO",
+       "porcentajeProgreso": 45,
+       "prediction": {
+         "estimatedDeliveryTime": "2026-10-23T17:35:00.000Z",
+         "accuracyPercentage": 94,
+         "recalculated": false,
+         "message": null
+       }
+     }
+     ```
+
+6. **Complete the Order (`POST /api/orders/{id}/simulate/complete`):**
+   * Expand `POST /api/orders/{id}/simulate/complete` under **Simulation** and click **Execute**.
+   * The order transitions to `"LISTO"` (100% progress). Checking prediction now yields `accuracyPercentage: 100`.
+
+---
+
 ## Centralized Error Handling (Phase 15)
 
 The API enforces a single, uniform JSON error format across all endpoints (validation, business conflicts, not found, upload errors, unhandled exceptions, and unknown routes) to provide predictable error parsing for mobile clients (Android & iOS).
