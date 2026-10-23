@@ -69,7 +69,7 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 
-app.use(express.json());
+app.use(express.json({ limit: '100kb' }));
 app.use(morgan('dev'));
 
 // Static files for photo evidence (CORP set to cross-origin for external frontend consumption)
