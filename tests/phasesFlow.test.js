@@ -5,6 +5,7 @@ const path = require('path');
 
 process.env.PORT = '3093';
 process.env.SIMULATION_PHASE_DURATION_MS = '60000';
+process.env.SIMULATION_AUTO_ADVANCE = 'true';
 process.env.JWT_SECRET = 'test-secret-at-least-32-characters-long-for-jwt-signing';
 process.env.JWT_EXPIRES_IN = '1d';
 
@@ -256,11 +257,22 @@ async function runPhasesFlowTests() {
     const bayAfterCreation = await prisma.bay.findUnique({ where: { id: testBay.id } });
     assert.strictEqual(bayAfterCreation.ocupada, true);
 
+    const vBayConflict = await prisma.vehicle.create({
+      data: {
+        placa: `PHS-${Date.now().toString().slice(-4)}B`,
+        marca: 'Chevrolet',
+        modelo: 'Onix',
+        color: 'Gris',
+        ownerName: 'Bay Conflict Owner',
+      },
+    });
+    createdVehicleIds.push(vBayConflict.id);
+
     // Second order trying to take same bay returns 409 BAY_OCCUPIED
     const conflictBayRes = await makeRequest(
       'POST',
       '/api/orders',
-      { vehicleId: v1.id, bayId: testBay.id },
+      { vehicleId: vBayConflict.id, bayId: testBay.id },
       operatorHeaders
     );
     assert.strictEqual(conflictBayRes.status, 409);
