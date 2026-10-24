@@ -1,7 +1,7 @@
 const prisma = require('../config/db');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
-const { getNextPhase, PHASE_PROGRESS_MAP } = require('../services/simulation.service');
+const { getNextPhase, PHASE_PROGRESS_MAP, PHASE_LABELS } = require('../services/simulation.service');
 const { changePhase } = require('../services/orderPhase.service');
 const { calculateDeliveryPrediction } = require('../services/prediction.service');
 const { getPrismaPagination, buildPaginatedResponse } = require('../utils/pagination');
@@ -277,6 +277,10 @@ const simulateCompleteOrder = asyncHandler(async (req, res) => {
 
   const updatedOrder = await changePhase(id, 'LISTO', { source: 'DEMO' });
 
+  console.log(`[DEMO] Order #${id} force-completed`);
+  res.status(200).json(updatedOrder);
+});
+
 /**
  * Mark a service order as ready to wash (OPERARIO only)
  */
@@ -319,11 +323,50 @@ const markOrderReady = asyncHandler(async (req, res) => {
   res.status(200).json(updatedOrder);
 });
 
+/**
+ * Get timeline events of a service order
+ */
+const getOrderTimeline = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const orderId = Number(id);
+
+  const order = await prisma.serviceOrder.findUnique({
+    where: { id: orderId },
+    include: {
+      vehicle: true,
+    },
+  });
+
+  if (!order) {
+    throw AppError.notFound('Service order not found');
+  }
+
+  checkOrderAccess(order, req.user);
+
+  const events = await prisma.phaseEvent.findMany({
+    where: { orderId },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  const timeline = events.map((event) => ({
+    id: event.id,
+    orderId: event.orderId,
+    fase: event.fase,
+    label: PHASE_LABELS[event.fase] || event.fase,
+    progreso: event.progreso,
+    source: event.source,
+    createdAt: event.createdAt,
+  }));
+
+  res.status(200).json(timeline);
+});
+
 module.exports = {
   getServiceOrders,
   createServiceOrder,
   updateServicePhase,
   markOrderReady,
+  getOrderTimeline,
   trackOrderByPlaca,
   getOrderPrediction,
   simulateAdvanceOrder,
