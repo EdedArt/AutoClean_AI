@@ -3,6 +3,15 @@ const { z } = require('zod');
 const env = require('../../config/env');
 const { VALID_PHASES } = require('../simulation.service');
 
+const observationsSchema = z.object({
+  soapFoamVisible: z.boolean(),
+  waterOnCar: z.boolean(),
+  dryingInProgress: z.boolean(),
+  visibleDirt: z.enum(['none', 'light', 'heavy']),
+  cleanAndGlossy: z.boolean(),
+  observationNotes: z.string().default(''),
+});
+
 const geminiOutputSchema = z.object({
   plateDetected: z
     .string()
@@ -12,6 +21,7 @@ const geminiOutputSchema = z.object({
       return val.trim().toUpperCase();
     }),
   plateConfidence: z.coerce.number().min(0).max(1),
+  observations: observationsSchema,
   phase: z.enum(VALID_PHASES, {
     errorMap: () => ({ message: `Invalid phase; expected one of ${VALID_PHASES.join(', ')}` }),
   }),
@@ -27,7 +37,15 @@ const geminiOutputSchema = z.object({
 const SYSTEM_INSTRUCTION = `You are a vehicle wash phase and license plate analyzer for an automated car wash facility.
 Analyze the provided camera frame of a vehicle in the wash bay.
 
-Visual Wash Phase Guidelines:
+Analyze physical visual indicators objectively and prefer visible evidence over assumptions:
+1. soapFoamVisible: True ONLY if white soap foam, shampoo suds, or active lather is visibly covering vehicle surfaces.
+2. waterOnCar: True if the vehicle surface is visibly wet, dripping, being sprayed with water, or covered in water droplets.
+3. dryingInProgress: True if personnel are actively wiping with microfiber towels/chamois, using air blowers, or if the car is in a drying bay post-rinse without foam.
+4. visibleDirt: True assessment of dirt/dust/mud/road grime: "none" (paint is clean), "light" (dust/light spots), or "heavy" (thick mud, stains, heavy grime).
+5. cleanAndGlossy: True ONLY if paint looks clean, uniform, shiny, reflective, and completely free of dirt.
+6. observationNotes: Concise factual summary of what is physically visible.
+
+Visual Wash Phase Guidelines (secondary assessment):
 - PENDIENTE: The car is dry and dirty waiting in the bay, with no water or foam applied.
 - REMOJO: The car is being wetted or pre-rinsed with water, with no soap foam yet.
 - LAVADO: The car is covered in soap foam, shampoo, or actively being scrubbed.
@@ -51,6 +69,45 @@ const RESPONSE_SCHEMA = {
       type: Type.NUMBER,
       description: 'Confidence in plate recognition from 0.0 to 1.0',
     },
+    observations: {
+      type: Type.OBJECT,
+      description: 'Direct factual physical observations from the vehicle frame',
+      properties: {
+        soapFoamVisible: {
+          type: Type.BOOLEAN,
+          description: 'True if soap foam, suds, or lather is visible on the vehicle',
+        },
+        waterOnCar: {
+          type: Type.BOOLEAN,
+          description: 'True if vehicle surface is wet, dripping, or being sprayed with water',
+        },
+        dryingInProgress: {
+          type: Type.BOOLEAN,
+          description: 'True if wiping with towels, air drying, or damp after rinsing with no foam',
+        },
+        visibleDirt: {
+          type: Type.STRING,
+          enum: ['none', 'light', 'heavy'],
+          description: 'Visible dirt or grime: "none", "light", or "heavy"',
+        },
+        cleanAndGlossy: {
+          type: Type.BOOLEAN,
+          description: 'True if paint looks clean, uniform, and shiny',
+        },
+        observationNotes: {
+          type: Type.STRING,
+          description: 'Brief visual summary of observed vehicle physical state',
+        },
+      },
+      required: [
+        'soapFoamVisible',
+        'waterOnCar',
+        'dryingInProgress',
+        'visibleDirt',
+        'cleanAndGlossy',
+        'observationNotes',
+      ],
+    },
     phase: {
       type: Type.STRING,
       enum: VALID_PHASES,
@@ -71,7 +128,7 @@ const RESPONSE_SCHEMA = {
       description: 'Brief visual observations explaining the detected wash phase and vehicle state',
     },
   },
-  required: ['plateConfidence', 'phase', 'phaseConfidence', 'notes'],
+  required: ['plateConfidence', 'observations', 'phase', 'phaseConfidence', 'notes'],
 };
 
 // Internal client holder, allows test injection
