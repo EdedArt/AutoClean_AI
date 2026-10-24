@@ -46,6 +46,39 @@ const envSchema = z.object({
   JWT_EXPIRES_IN: z
     .string()
     .default('1d'),
+  GEMINI_API_KEY: z
+    .string()
+    .optional(),
+  GEMINI_MODEL: z
+    .string()
+    .default('gemini-3.1-flash-lite'),
+  AI_MODE: z
+    .enum(['auto', 'gemini', 'simulated'], {
+      errorMap: () => ({ message: 'AI_MODE must be one of: auto, gemini, simulated' }),
+    })
+    .default('auto'),
+  AI_FALLBACK_TO_SIMULATED: z
+    .union([z.boolean(), z.string()])
+    .default(true)
+    .transform((val) => {
+      if (typeof val === 'boolean') return val;
+      return val.toLowerCase() === 'true' || val === '1';
+    }),
+  AI_MIN_CONFIDENCE: z.coerce
+    .number({ invalid_type_error: 'AI_MIN_CONFIDENCE must be a number' })
+    .min(0, 'AI_MIN_CONFIDENCE must be between 0 and 1')
+    .max(1, 'AI_MIN_CONFIDENCE must be between 0 and 1')
+    .default(0.6),
+  GEMINI_TIMEOUT_MS: z.coerce
+    .number({ invalid_type_error: 'GEMINI_TIMEOUT_MS must be an integer' })
+    .int()
+    .positive()
+    .default(20000),
+  RATE_LIMIT_AI_MAX: z.coerce
+    .number({ invalid_type_error: 'RATE_LIMIT_AI_MAX must be an integer' })
+    .int()
+    .positive()
+    .default(10),
 });
 
 /**
@@ -71,6 +104,18 @@ function validateEnv(env = process.env, shouldExit = true) {
     err.issues = result.error.issues;
     throw err;
   }
+
+  // Fast-fail: if AI_MODE is "gemini" and GEMINI_API_KEY is not configured
+  if (result.data.AI_MODE === 'gemini' && (!result.data.GEMINI_API_KEY || result.data.GEMINI_API_KEY.trim() === '')) {
+    const fullMessage = "❌ Invalid environment variables configuration: GEMINI_API_KEY is required when AI_MODE is 'gemini'";
+    console.error(fullMessage);
+    if (shouldExit) {
+      process.exit(1);
+    }
+    const err = new Error(fullMessage);
+    throw err;
+  }
+
   return result.data;
 }
 
@@ -116,6 +161,30 @@ const env = {
       return String(process.env.SIMULATION_AUTO_ADVANCE).toLowerCase() === 'true' || process.env.SIMULATION_AUTO_ADVANCE === '1';
     }
     return parsed.SIMULATION_AUTO_ADVANCE;
+  },
+  get GEMINI_API_KEY() {
+    return process.env.GEMINI_API_KEY !== undefined ? process.env.GEMINI_API_KEY : parsed.GEMINI_API_KEY;
+  },
+  get GEMINI_MODEL() {
+    return process.env.GEMINI_MODEL || parsed.GEMINI_MODEL;
+  },
+  get AI_MODE() {
+    return process.env.AI_MODE || parsed.AI_MODE;
+  },
+  get AI_FALLBACK_TO_SIMULATED() {
+    if (process.env.AI_FALLBACK_TO_SIMULATED !== undefined) {
+      return String(process.env.AI_FALLBACK_TO_SIMULATED).toLowerCase() === 'true' || process.env.AI_FALLBACK_TO_SIMULATED === '1';
+    }
+    return parsed.AI_FALLBACK_TO_SIMULATED;
+  },
+  get AI_MIN_CONFIDENCE() {
+    return process.env.AI_MIN_CONFIDENCE !== undefined ? parseFloat(process.env.AI_MIN_CONFIDENCE) : parsed.AI_MIN_CONFIDENCE;
+  },
+  get GEMINI_TIMEOUT_MS() {
+    return process.env.GEMINI_TIMEOUT_MS !== undefined ? parseInt(process.env.GEMINI_TIMEOUT_MS, 10) : parsed.GEMINI_TIMEOUT_MS;
+  },
+  get RATE_LIMIT_AI_MAX() {
+    return process.env.RATE_LIMIT_AI_MAX !== undefined ? parseInt(process.env.RATE_LIMIT_AI_MAX, 10) : parsed.RATE_LIMIT_AI_MAX;
   },
   validateEnv,
   envSchema,
