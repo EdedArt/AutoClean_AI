@@ -100,11 +100,35 @@ const aiAnalysisLimiter = rateLimit({
   handler: rateLimitHandler('Too many AI analysis requests, please try again later.'),
 });
 
+/**
+ * Dedicated rate limiter for plate status lookup (default: 30 req/min), keyed by authenticated user ID.
+ */
+const plateLookupLimiter = rateLimit({
+  windowMs: 60000,
+  limit: () => env.PLATE_LOOKUP_RATE_LIMIT_PER_MINUTE || 30,
+  keyGenerator: (req) => {
+    return req.user && req.user.id ? `user_${req.user.id}` : (req.ip || 'unknown');
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => {
+    if (
+      env.NODE_ENV === 'test' &&
+      (!process.env.PLATE_LOOKUP_RATE_LIMIT_PER_MINUTE || parseInt(process.env.PLATE_LOOKUP_RATE_LIMIT_PER_MINUTE, 10) >= 30)
+    ) {
+      return true;
+    }
+    return false;
+  },
+  handler: rateLimitHandler('Too many plate lookup requests, please try again later.'),
+});
+
 module.exports = {
   globalLimiter,
   evidenceUploadLimiter,
   authLimiter,
   aiAnalysisLimiter,
+  plateLookupLimiter,
   rateLimitHandler,
 };
 
