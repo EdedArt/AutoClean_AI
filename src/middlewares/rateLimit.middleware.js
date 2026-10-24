@@ -109,6 +109,7 @@ const plateLookupLimiter = rateLimit({
   keyGenerator: (req) => {
     return req.user && req.user.id ? `user_${req.user.id}` : (req.ip || 'unknown');
   },
+  validate: { keyGeneratorIpFallback: false },
   standardHeaders: true,
   legacyHeaders: false,
   skip: () => {

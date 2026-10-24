@@ -34,6 +34,8 @@ tags:
     description: User registration, login, and identity verification with JWT
   - name: AI
     description: Gemini AI camera vision analysis and status
+  - name: Plates
+    description: License plate lookup and client search history management
 paths:
   /api/auth/register:
     post:
@@ -839,7 +841,7 @@ paths:
         - Evidence
       summary: List all photo evidences for a service order
       description: >-
-        Retrieves all photo evidence records for the specified service order ordered by creation date descending. Role visibility: OPERARIO has full access; CLIENTE receives 404 NOT_FOUND if the order belongs to another client's vehicle.
+        Retrieves all photo evidence records for the specified service order ordered by creation date descending. Role restriction: OPERARIO only. CLIENTE receives 403 FORBIDDEN (photos are private to the shop).
       parameters:
         - name: orderId
           in: path
@@ -859,6 +861,10 @@ paths:
                   $ref: '#/components/schemas/Evidence'
         '400':
           $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -1009,6 +1015,96 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AiAnalysesListResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/plates/{placa}/status:
+    get:
+      tags:
+        - Plates
+      summary: Lookup minimal status for any vehicle license plate
+      description: >-
+        Looks up the current active wash order minimal status for any vehicle plate.
+        Available to any authenticated user (CLIENTE or OPERARIO). Knowing a plate is enough.
+        Side effect (CLIENTE only): Saves or updates the plate in the user's search history (max 10 recent).
+        Returns 404 NOT_FOUND with "No hay un carro lavándose con esta placa" if the plate does not exist, has no order, or is already delivered.
+      parameters:
+        - name: placa
+          in: path
+          required: true
+          description: Vehicle license plate (e.g. ABC-123 or ABC123)
+          schema:
+            type: string
+            example: ABC-123
+      responses:
+        '200':
+          description: Minimal plate and wash order status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlateStatus'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/me/plates:
+    get:
+      tags:
+        - Plates
+      summary: List searched plates history for the authenticated client
+      description: >-
+        Retrieves the authenticated client's search history (up to 10 most recent searched plates),
+        enriched with current live status or an inactive notice. OPERARIO receives 403 FORBIDDEN.
+      responses:
+        '200':
+          description: Array of searched plates with status
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SearchedPlateEntry'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/me/plates/{placa}:
+    delete:
+      tags:
+        - Plates
+      summary: Remove a plate from the authenticated client's search history
+      description: >-
+        Removes a searched plate from the client's search history.
+        Returns 204 on success, or 404 NOT_FOUND if the plate is not in the user's history.
+        OPERARIO receives 403 FORBIDDEN.
+      parameters:
+        - name: placa
+          in: path
+          required: true
+          description: Vehicle license plate to remove from history
+          schema:
+            type: string
+            example: ABC-123
+      responses:
+        '204':
+          description: Plate removed from search history successfully
         '400':
           $ref: '#/components/responses/ValidationError'
         '401':
@@ -1795,6 +1891,89 @@ components:
             $ref: '#/components/schemas/AiAnalysis'
         meta:
           $ref: '#/components/schemas/PaginationMeta'
+
+    PlateStatus:
+      type: object
+      required:
+        - placa
+        - marca
+        - modelo
+        - color
+        - fase
+        - porcentajeProgreso
+        - listoParaLavar
+        - startedAt
+        - receivedAt
+        - etaMinutes
+        - etaLabel
+        - estimatedReadyAt
+      properties:
+        placa:
+          type: string
+          example: ABC-123
+        marca:
+          type: string
+          example: Mazda
+        modelo:
+          type: string
+          example: CX-5
+        color:
+          type: string
+          example: Rojo
+        fase:
+          type: string
+          enum: [PENDIENTE, REMOJO, LAVADO, SECADO, LISTO]
+          example: LAVADO
+        porcentajeProgreso:
+          type: integer
+          example: 60
+        listoParaLavar:
+          type: boolean
+          example: true
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
+          example: '2026-10-24T18:00:00.000Z'
+        receivedAt:
+          type: string
+          format: date-time
+          nullable: true
+          example: '2026-10-24T17:50:00.000Z'
+        etaMinutes:
+          type: integer
+          example: 25
+        etaLabel:
+          type: string
+          example: 'Aprox. 25 min'
+        estimatedReadyAt:
+          type: string
+          format: date-time
+          nullable: true
+          example: '2026-10-24T18:25:00.000Z'
+
+    SearchedPlateEntry:
+      type: object
+      required:
+        - placa
+        - lastSearchedAt
+        - status
+      properties:
+        placa:
+          type: string
+          example: ABC-123
+        lastSearchedAt:
+          type: string
+          format: date-time
+          example: '2026-10-24T18:15:00.000Z'
+        status:
+          oneOf:
+            - $ref: '#/components/schemas/PlateStatus'
+            - type: 'null'
+        message:
+          type: string
+          description: Explanatory message when status is null
+          example: 'No hay un carro lavándose con esta placa'
 
   responses:
     ValidationError:
