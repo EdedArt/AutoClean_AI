@@ -215,6 +215,7 @@ const trackOrderByPlaca = asyncHandler(async (req, res) => {
       vehicle: {
         placa,
       },
+      deliveredAt: null,
     },
     orderBy: {
       createdAt: 'desc',
@@ -227,10 +228,10 @@ const trackOrderByPlaca = asyncHandler(async (req, res) => {
   });
 
   if (!order) {
-    throw AppError.notFound('No se encontraron órdenes activas para esta placa');
+    throw AppError.notFound('No hay un carro lavándose con esta placa');
   }
 
-  checkOrderAccess(order, req.user, 'No se encontraron órdenes activas para esta placa');
+  checkOrderAccess(order, req.user, 'No hay un carro lavándose con esta placa');
 
   const prediction = calculateDeliveryPrediction(order);
 
