@@ -1,1145 +1,460 @@
 # AutoClean AI — Backend
 
-## Delivery, One Active Order per Plate & Realistic ETA (Phase 23)
+[![CI](https://github.com/EdedArt/AutoClean_AI/actions/workflows/ci.yml/badge.svg)](https://github.com/EdedArt/AutoClean_AI/actions/workflows/ci.yml)
 
-Phase 23 introduces order delivery lifecycle management, enforces strict one-active-order concurrency per vehicle license plate, limits tracking to currently active car washes, and provides realistic ETA estimations independent of demo simulation speeds.
-
----
-
-### 1. Delivery Lifecycle (`POST /api/orders/:id/deliver`)
-
-* **Delivery is NOT a wash phase:** The car wash cycle phases remain strictly `['PENDIENTE', 'REMOJO', 'LAVADO', 'SECADO', 'LISTO']`. Delivery is a separate business milestone stored as `ServiceOrder.deliveredAt`.
-* **Prerequisites:** Only orders in `faseActual = 'LISTO'` can be delivered. Attempting to deliver prior phases returns `409 NOT_FINISHED`.
-* **Role Restriction:** Restricted to staff (`OPERARIO`). Clients (`CLIENTE`) receive `403 FORBIDDEN`.
-* **Bays Untouched:** Wash bays are already freed upon reaching `LISTO`. Delivery does not alter bay occupancy.
-* **Idempotency & Change Locks:** Calling deliver on an already delivered order returns `409 ALREADY_DELIVERED`. Delivered orders cannot be modified: `PATCH /api/orders/:id/phase`, demo controls (`advance`, `reset`, `complete`), and AI `/analyze` all reject delivered orders with `409 ALREADY_DELIVERED`.
-* **Timeline Delivery Event:** Calling `GET /api/orders/:id/timeline` appends a delivery entry `{ type: "DELIVERED", at: "..." }` without creating a DB PhaseEvent row, preserving backwards compatibility.
-
-#### Delivering an Order:
-```bash
-curl -X POST http://localhost:3000/api/orders/1/deliver \
-  -H "Authorization: Bearer $TOKEN"
-```
+Robust, production-ready RESTful backend API and AI vision monitoring engine for **AutoClean AI**, an automated smart vehicle wash management system. AutoClean AI monitors wash cycles in real time, manages physical washing bay allocation, generates realistic completion estimates (ETAs), and analyzes surveillance camera photographs using Google Gemini Vision to automatically detect vehicle license plates and wash phases.
 
 ---
 
-### 2. One Active Order per License Plate
+## 1. What It Is
 
-* **Active Order Definition:** An order is considered **active** as long as `deliveredAt` is `null` (a car in `LISTO` waiting for customer pickup is still active).
-* **Strict Concurrency Rule:** A vehicle can have only **ONE active order at any given time**.
-* **Rejection:** Calling `POST /api/orders` for a vehicle with an active order returns `409 Conflict` with code `ACTIVE_ORDER_EXISTS`:
-  ```json
-  {
-    "error": {
-      "code": "ACTIVE_ORDER_EXISTS",
-      "message": "Vehicle already has an active service order",
-      "details": {
-        "orderId": 42,
-        "faseActual": "LAVADO"
-      }
-    }
-  }
-  ```
-* **Re-ordering:** Once the active order is delivered (`POST /api/orders/:id/deliver`), creating a new order for that plate is immediately permitted.
+AutoClean AI is designed for commercial car wash facilities and their clients:
+* **For Operators (`OPERARIO`):** Centralized dashboard control to register incoming vehicles, assign service packages and washing bays, mark orders ready to wash, advance phases manually or through demo simulation triggers, upload photographic wash evidence, analyze camera snapshots via Gemini Vision AI, and formally deliver finished vehicles.
+* **For Clients (`CLIENTE`):** Mobile and web accessibility to track vehicle progress in real time via license plate status lookups (`GET /api/plates/:placa/status`), view personal search history, track active orders, and monitor phase progress and estimated completion time (ETA) while guaranteeing privacy (clients never have access to operator photo evidence).
 
 ---
 
-### 3. Active Vehicle Tracking (`GET /api/orders/track/:placa`)
+## 2. Technology Stack
 
-* **Active-Only Lookup:** Tracking a plate only considers orders where `deliveredAt` is `null`.
-* **Uniform Privacy-Preserving 404:** If no active order exists (never registered, already delivered, or owned by a different `CLIENTE`), the API returns the exact identical 404 response:
-  ```json
-  {
-    "error": {
-      "code": "NOT_FOUND",
-      "message": "No hay un carro lavándose con esta placa"
-    }
-  }
-  ```
-
-#### Tracking an Active Plate:
-```bash
-curl -X GET http://localhost:3000/api/orders/track/XYZ-123 \
-  -H "Authorization: Bearer $TOKEN"
-```
+* **Runtime:** Node.js (v20+ recommended)
+* **Framework:** Express.js 4.x
+* **Database & ORM:** SQLite with Prisma ORM 5.x
+* **Authentication & Security:** JSON Web Tokens (`jsonwebtoken`), `bcryptjs`, `helmet` (HTTP security headers, CORP), `cors` (origin whitelisting), and `express-rate-limit` (layered rate limiting)
+* **File Uploads:** Multer (multipart form handling for photo evidence with MIME and size constraints)
+* **AI Vision Integration:** Google Gen AI SDK (`@google/genai`) with Gemini 3.1 Flash Lite and deterministic local simulated fallback
+* **Validation:** Zod 4.x for environment variables and HTTP request schemas
+* **Documentation:** OpenAPI 3.0.3 specification documented in YAML with interactive Swagger UI
+* **Testing:** Native Node.js test harness (`node tests/runAll.js`) with custom HTTP clients covering unit, integration, validation, security, and authorization scenarios
 
 ---
 
-### 4. Orders Active Query Filter (`GET /api/orders?active=true|false`)
+## 3. Quick Start
 
-The orders list endpoint supports an optional `active` boolean query parameter:
-* `GET /api/orders?active=true`: Returns only active orders (`deliveredAt` is null).
-* `GET /api/orders?active=false`: Returns only delivered orders (`deliveredAt` is not null).
-* Omitted: Returns all orders (preserving standard pagination and filtering).
+### Prerequisites
+* Node.js v20+ and npm installed
+* Git
 
-```bash
-curl -X GET "http://localhost:3000/api/orders?active=true&page=1&limit=10" \
-  -H "Authorization: Bearer $TOKEN"
-```
-
----
-
-### 5. Realistic ETA (Independent of Simulation Duration)
-
-Clients receive realistic time-to-completion estimations based on real-world car wash phase durations rather than the demo acceleration timer (`SIMULATION_PHASE_DURATION_MS`).
-
-* **Default Phase Durations:**
-  * `PENDIENTE`: 10 minutes
-  * `REMOJO`: 5 minutes
-  * `LAVADO`: 15 minutes
-  * `SECADO`: 10 minutes
-  * `LISTO`: 0 minutes
-  * `QUEUE_WAIT_PER_ORDER_MINUTES`: 15 minutes
-* **Optional Environment Override:** Set `PHASE_ETA_MINUTES` as JSON in `.env` (validated with safe fallback to defaults at startup).
-* **Calculation:**
-  * Remaining = Sum of phase minutes from current phase onward minus minutes already elapsed in the current phase (referenced against latest phase transition).
-  * Clamped: Never below 1 minute unless in `LISTO` (which returns 0).
-  * Queue Wait: If an order is `PENDIENTE` and unready (`listoParaLavar: false`), 15 minutes are added for each earlier active order not yet in `LISTO` (capped at 120 minutes).
-* **Response Fields Exposed in `GET /api/orders` & `GET /api/orders/track/:placa`:**
-  * `etaMinutes` (integer): Remaining minutes (0 when `LISTO`).
-  * `etaLabel` (string): `"Listo para entregar"`, `"Pendiente, aprox. 1 h 30 min"`, or `"Aprox. 25 min"` (formatted under 60 min as `"X min"`, 60+ as `"X h Y min"`, exact hours as `"X h"`).
-  * `estimatedReadyAt` (ISO 8601 string or `null` when `LISTO`).
-  * `deliveredAt` (ISO 8601 string or `null`).
-
----
-
-## Gemini Vision & Phase Detection (Phase 22)
-
-Phase 22 integrates multimodal computer vision using Google Gen AI (`@google/genai`) to automate bay operations. Camera frames of vehicles in wash bays are analyzed to read Colombian license plates (`XXX-123`) and classify the current wash phase (`PENDIENTE`, `REMOJO`, `LAVADO`, `SECADO`, `LISTO`). When the detected plate matches the order's vehicle, the phase advances automatically via `changePhase(orderId, phase, { source: "AI" })`.
-
----
-
-### 1. End-to-End Operator Workflow
-
-The complete camera frame analysis workflow follows these steps:
-
-```
-[1. Login as Operario] ──► [2. Create Vehicle & Order] ──► [3. Mark Ready to Wash] ──► [4. AI Vision Analysis]
-    POST /api/auth/login        POST /api/vehicles            POST /api/orders/:id/ready    POST /api/orders/:id/analyze
-    (Bearer Token)              POST /api/orders              (listoParaLavar: true)        (Upload photo frame)
-```
-
-1. **Authenticate as Workshop Staff (`OPERARIO`):**
+### Step-by-Step Setup
+1. **Clone the repository:**
    ```bash
-   TOKEN=$(curl -s -X POST http://localhost:3000/api/auth/login \
-     -H "Content-Type: application/json" \
-     -d '{"email":"operario@autoclean.com","password":"Demo12345!"}' | jq -r '.token')
+   git clone https://github.com/EdedArt/AutoClean_AI.git
+   cd AutoClean_AI/Backend
    ```
 
-2. **Register Vehicle & Create Service Order:**
+2. **Install dependencies:**
    ```bash
-   # Register vehicle
-   curl -X POST http://localhost:3000/api/vehicles \
-     -H "Authorization: Bearer $TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"placa":"XYZ-123","marca":"Mazda","modelo":"CX-50","color":"Rojo","ownerName":"Edgar Arteaga"}'
-
-   # Create order in Bay 1
-   curl -X POST http://localhost:3000/api/orders \
-     -H "Authorization: Bearer $TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"vehicleId":1,"packageId":1,"bayId":1}'
+   npm ci
    ```
 
-3. **Mark Vehicle Ready to Wash:**
+3. **Configure environment variables:**
+   Copy the example environment configuration template:
    ```bash
-   curl -X POST http://localhost:3000/api/orders/1/ready \
-     -H "Authorization: Bearer $TOKEN"
+   cp .env.example .env
    ```
+   *Edit `.env` if you wish to configure a real `GEMINI_API_KEY` or custom port. Default settings use local SQLite (`dev.db`), simulated AI provider (`AI_MODE=simulated`), and port 3000.*
 
-4. **Send Camera Frame for AI Analysis:**
+4. **Run database migrations:**
    ```bash
-   curl -X POST http://localhost:3000/api/orders/1/analyze \
-     -H "Authorization: Bearer $TOKEN" \
-     -F "image=@path/to/car_in_bay.jpg" \
-     -F "saveEvidence=true"
+   npx prisma migrate deploy
    ```
 
-> [!TIP]
-> **Recommended Setting for AI Demos:**
-> When testing or demonstrating the AI camera vision pipeline, set `SIMULATION_AUTO_ADVANCE=false` in your `.env` (or environment). This stops the automated time-based simulation timer from auto-advancing phases in the background, allowing the AI camera frames to exclusively drive the car wash progression.
-
----
-
-### 2. Provider Architecture & Automatic Fallback
-
-The backend abstracts vision providers under `src/services/ai/index.js` with three operating modes:
-
-| Mode (`AI_MODE`) | Behavior | Fallback on Gemini Failure |
-| :--- | :--- | :--- |
-| `auto` *(default)* | Uses Gemini if `GEMINI_API_KEY` is configured; otherwise uses simulated provider | If Gemini fails and `AI_FALLBACK_TO_SIMULATED=true`, falls back to simulated provider |
-| `gemini` | Exclusively calls Gemini. Fails fast at startup if `GEMINI_API_KEY` is missing | If Gemini fails and fallback is enabled, uses simulated; if disabled, throws `503 AI_UNAVAILABLE` (or `503 AI_RATE_LIMITED` on quota 429) |
-| `simulated` | Fully local and deterministic. Does not require an API key or internet access | N/A (runs locally) |
-
-#### Fallback Rules:
-* When Gemini encounters quota exhaustion (`HTTP 429` / `RESOURCE_EXHAUSTED`), timeouts (`GEMINI_TIMEOUT_MS`), or network errors:
-  * If `AI_FALLBACK_TO_SIMULATED=true` (default): Immediately falls back to the deterministic simulated provider, returning HTTP 200 with `fallbackUsed: true` and `provider: "simulated"`.
-  * If `AI_FALLBACK_TO_SIMULATED=false`: Returns HTTP `503 AI_RATE_LIMITED` (for quota errors with retry hint) or HTTP `503 AI_UNAVAILABLE`.
-
----
-
-### 3. Demo Scenarios in Simulated Provider
-
-To facilitate testing and frontend UI demonstrations without a physical camera or vehicle:
-* Form parameter `scenario`:
-  * `wrong_vehicle`: Simulates reading a mismatched license plate (`ZZZ-999`), triggering HTTP `409 Conflict` (`WRONG_VEHICLE`) with details `{ detected: "ZZZ-999", expected: "XYZ-123" }`.
-  * `unreadable`: Simulates an obstructed or blurry plate (`plateDetected: null`), triggering HTTP `422 Unprocessable Entity` (`PLATE_UNREADABLE`).
-  * `regression`: Simulates detecting an earlier phase (e.g. `REMOJO` when order is already in `LAVADO`), returning HTTP 200 with `changed: false` and `regression: true` (the system never regresses phase automatically).
-  * `low_confidence`: Simulates low confidence score (`phaseConfidence: 0.40`), returning HTTP 200 with `changed: false`.
-
----
-
-### 4. Verification & Testing via CLI Smoke Script
-
-A standalone smoke test script is provided to verify your Google AI Studio API key and model with a real local photo:
-
-```bash
-npm run ai:smoke -- path/to/vehicle.jpg
-```
-* Loads `.env` securely.
-* Passes the image to the AI provider.
-* Prints ONLY the structured output, latency, provider, and model name.
-* **Secrets Protection:** Sanitizes and suppresses any API key values from output and logs.
-
-#### Reference Sample Images:
-For manual verification across all wash phases, reference test images:
-* `PENDIENTE`: `sucia.jfif`
-* `REMOJO`: `remojo.jfif`
-* `LAVADO`: `enjabonado.jfif`
-* `SECADO`: `secado.jfif`
-* `LISTO`: `terminado.jpg`
-
-> [!CAUTION]
-> **Free-Tier Privacy Notice:**
-> When using the free tier of Google AI Studio (Gemini API), Google may use input data and prompts to train and improve its models. Do **NOT** submit photographs of real private license plates or identifiable individuals in production without reviewing your Google Cloud / Workspace terms of service.
-
----
-
-### 5. Context-Aware Observation Classification & Decision Rules (Phase 22c)
-
-#### Product Decision: Monitoring vs. Quality Audit
-AutoClean AI **MONITORS** a car wash; it does **NOT** audit wash quality. The AI must never flag "dirty after wash" or "quality review". Instead, the final phase is decided by combining physical photo observations with the order's **CURRENT phase** (`currentPhase` backend history).
-
-A dry car with no foam, no water, and no drying activity is inherently ambiguous on its own (it could be "dirty before wash" awaiting its cycle, or "ready after wash" waiting for client pickup); only the order context disambiguates which state applies:
-
-1. **Multimodal Extraction (`geminiProvider.js`):** The vision model extracts objective, physical visual `observations` from the vehicle camera frame:
-   * `soapFoamVisible` (boolean): Whether white soap foam, shampoo suds, or active lather is visible on the vehicle surface.
-   * `waterOnCar` (boolean): Whether the vehicle body is visibly wet, dripping, or being sprayed with water.
-   * `dryingInProgress` (boolean): Whether personnel are actively wiping with microfiber towels/chamois, using air blowers, or if the car is in a drying bay without foam.
-   * `visibleDirt` (`"none"` | `"light"` | `"heavy"`): Visual assessment of dust, road grime, mud, or stains (stored for informative purposes only; never used to gate or audit `LISTO`).
-   * `cleanAndGlossy` (boolean): Whether the paint appears shiny or clean (informative only; never determines `LISTO`).
-   * `observationNotes` (string): Concise factual summary of visible physical facts.
-
-2. **Deterministic Context-Aware Decision Engine (`src/services/ai/phaseRules.js`):** Our backend combines physical observations with the order context (`{ currentPhase }`) through a strict priority decision table:
-
-| Priority | Physical Condition & Order Context | Decided Phase | Source | Explanation |
-| :---: | :--- | :---: | :---: | :--- |
-| **1** | `soapFoamVisible === true` | `LAVADO` | `rules` | Soap foam takes absolute precedence over all other signals in any order phase. |
-| **2** | `waterOnCar && dryingInProgress` | `SECADO` | `rules` | Vehicle is wet and active drying (towels/blowers) is underway. |
-| **3** | `waterOnCar && !dryingInProgress` | `REMOJO` | `rules` | Vehicle has water with no foam or drying (pre-rinse or rinse stage). |
-| **4a** | Dry car (`!foam && !water && !drying`) with `currentPhase` in `["SECADO", "LISTO"]` | `LISTO` | `rules` | The wash cycle has completed drying; resolves to `LISTO` regardless of `visibleDirt` or `cleanAndGlossy` (monitoring, not quality control). |
-| **4b** | Dry car (`!foam && !water && !drying`) with `currentPhase` in `["PENDIENTE", "REMOJO", "LAVADO"]` | `currentPhase` *(no change)* | `rules` | Vehicle is dry/waiting in the bay; never jumps to `LISTO` based on visual cleanliness. |
-| **4c** | Dry car without order context (smoke test / CLI) | `PENDIENTE` | `rules` | Resolves to `PENDIENTE` (with capped confidence `0.70` if `visibleDirt === "none"`); **never** `LISTO` without order context. |
-| **5** | *Contradictory or ambiguous observations* | *Model's Guess* | `model` | Falls back to model estimate with confidence capped at `0.70` (never `LISTO` unless order is already in `SECADO` or `LISTO`). |
-
-#### Confidence Scoring & Auditability:
-* **Rule-Derived Confidence:** For rule-resolved phases, confidence is calculated as `Math.min(modelConfidence, 0.95)` to preserve honest probabilistic evaluation while bounding deterministic rule matches.
-* **Audit Trail:** Responses from `POST /api/orders/:id/analyze` expose `observations`, `phaseSource` (`"rules"` | `"model"`), and `phaseReason` directly in the payload and appended to order notes, enabling complete operational transparency.
-* **Never-Regress Guarantee:** A decided phase earlier than the current order phase is safely ignored with `regression: true` and `changed: false`.
-
-
----
-
-## New Wash Phases, Ready-to-Wash Flow and Bay Lifecycle (Phase 21)
-
-Phase 21 establishes a 5-phase wash workflow, introduces an explicit operator "Ready to Wash" trigger, records an immutable chronological phase audit trail (`PhaseEvent`), enforces automated washing bay lifecycle management, and adds configurable simulation controls.
-
----
-
-### 1. Wash Phase Catalog & Progress Table
-
-Wash phases are centrally managed in `src/services/simulation.service.js` with Spanish display labels and fixed progress percentages:
-
-| Phase Code | Display Label | Progress | Order | Description |
-| :--- | :--- | :---: | :---: | :--- |
-| `PENDIENTE` | Pendiente | `10%` | 1 | Initial order state upon creation; car is queued and not yet ready for washing. |
-| `REMOJO` | Remojo | `30%` | 2 | Initial soaking, degreasing, and pre-wash rinse cycle. |
-| `LAVADO` | Lavando | `55%` | 3 | Active foam shampoo application and mechanical washing. |
-| `SECADO` | Secado | `80%` | 4 | Air drying, microfiber towel wipe-down, and finishing. |
-| `LISTO` | Listo | `100%` | 5 | Service complete; vehicle is ready for client delivery and bay is automatically freed. |
-
-#### Phase Catalog Endpoint (`GET /api/phases`)
-* **Access:** Authenticated (`OPERARIO` or `CLIENTE`).
-* **Response (200 OK):**
-  ```json
-  [
-    { "code": "PENDIENTE", "label": "Pendiente", "progress": 10, "order": 1 },
-    { "code": "REMOJO", "label": "Remojo", "progress": 30, "order": 2 },
-    { "code": "LAVADO", "label": "Lavando", "progress": 55, "order": 3 },
-    { "code": "SECADO", "label": "Secado", "progress": 80, "order": 4 },
-    { "code": "LISTO", "label": "Listo", "progress": 100, "order": 5 }
-  ]
-  ```
-
----
-
-### 2. Operator Workflow: From Vehicle to Finished Wash
-
-The complete operational flow for workshop staff follows 4 steps:
-
-```
-[1. POST /api/vehicles]  ──►  [2. POST /api/orders]  ──►  [3. POST /api/orders/:id/ready]  ──►  [4. Phase Progression]
-  Register vehicle               Starts PENDIENTE (10%)        Operator marks ready              REMOJO (30%) -> LAVADO (55%) ->
-  with plate & owner             Bay marked occupied           Timer starts (readyAt)            SECADO (80%) -> LISTO (100%, bay freed)
-```
-
-1. **Register the Vehicle:**
-   * Staff registers the vehicle (`POST /api/vehicles`) with plate, make, model, color, and owner.
-2. **Create the Service Order:**
-   * Staff creates the order (`POST /api/orders`) specifying `vehicleId`, `packageId`, and `bayId`.
-   * **Initial State:** Created with `faseActual: "PENDIENTE"`, `porcentajeProgreso: 10`, `listoParaLavar: false`, and `readyAt: null`.
-   * **Bay Assignment:** If `bayId` is provided, the target bay is automatically checked and marked `ocupada: true` within the exact same database transaction. Attempting to assign an occupied bay returns HTTP `409 Conflict` (`BAY_OCCUPIED`).
-   * **Initial Audit Event:** Automatically records the first `PhaseEvent` (`fase: "PENDIENTE"`, `progreso: 10`, `source: "MANUAL"`).
-3. **Trigger "Ready to Wash" (`POST /api/orders/:id/ready`):**
-   * When the car is physically positioned in the bay and ready for the wash cycle, the operator calls the ready endpoint.
-   * **Role:** `OPERARIO` only (returns `403 Forbidden` for `CLIENTE`).
-   * **Updates:** Sets `listoParaLavar: true`, `readyAt: new Date()`, and updates `updatedAt: new Date()`.
-   * **Validation Guards:**
-     * If already ready (`listoParaLavar: true`) -> returns HTTP `409 Conflict` (`ALREADY_READY`).
-     * If not in `PENDIENTE` phase -> returns HTTP `409 Conflict` (`INVALID_STATE`).
-     * If order does not exist -> returns HTTP `404 Not Found` (`NOT_FOUND`).
-   * **Console Log:** Emits `[READY] Order #<id> marked ready to wash`.
-4. **Phase Progression & Completion:**
-   * Once ready, the order is eligible for automated background progression (`SIMULATION`), manual technician updates (`MANUAL`), or demo overrides (`DEMO`).
-   * Transitioning to `LISTO` (100%) automatically marks the bay `ocupada: false`.
-
----
-
-### 3. Bay Lifecycle Management
-
-Washing bays are managed transactionally during order lifecycle events:
-* **Occupied on Creation:** When `POST /api/orders` assigns a `bayId`, the bay becomes `ocupada: true`.
-* **Freed on Completion:** Whenever an order reaches `LISTO` (via `changePhase`), the associated bay is automatically released (`ocupada: false`).
-* **Re-occupancy on Reset:** If an order leaves `LISTO` (e.g. `POST /api/orders/:id/simulate/reset` back to `PENDIENTE`), the service attempts to re-occupy the assigned bay:
-  * If the bay is currently free -> re-occupies the bay (`ocupada: true`).
-  * If the bay has since been taken by another order -> aborts transaction and returns HTTP `409 Conflict` (`BAY_OCCUPIED`).
-* **Real-time Occupancy Badge (`GET /api/bays/summary`):** Accurately reflects current bay states (`total`, `occupied`, `free`).
-
----
-
-### 4. Order Phase Timeline Audit Trail (`GET /api/orders/:id/timeline`)
-
-Every phase change is recorded in an immutable audit table (`PhaseEvent`) with fields:
-* `fase`: Canonical phase (`PENDIENTE`, `REMOJO`, `LAVADO`, `SECADO`, `LISTO`).
-* `label`: Spanish display label (`Pendiente`, `Remojo`, `Lavando`, `Secado`, `Listo`).
-* `progreso`: Progress percentage at the time of the event (`10`, `30`, `55`, `80`, `100`).
-* `source`: Origin of the transition (`MANUAL`, `SIMULATION`, `DEMO`, or `AI`).
-* `createdAt`: ISO-8601 timestamp when the event occurred.
-
-* **Client Ownership Security:** If an authenticated `CLIENTE` requests the timeline of an order belonging to another customer's vehicle, the API responds with HTTP `404 Not Found` to preserve complete privacy.
-
----
-
-### 5. Configurable Simulation & Delay Detection (`SIMULATION_AUTO_ADVANCE`)
-
-* **Simulation Guard:** Background auto-advancement only processes orders where `listoParaLavar === true` and `faseActual !== "LISTO"`. Unready `PENDIENTE` orders remain paused indefinitely until an operator activates them.
-* **Master Switch (`SIMULATION_AUTO_ADVANCE`):**
-  * When `true` (default): Background simulation loop advances eligible orders every interval.
-  * When `false`: Scheduler loop executes cleanly without advancing any orders (designed for upcoming AI camera integration).
-* **Smart Delay Detection:** Orders resting in `PENDIENTE` that are not yet marked ready are **never** flagged as delayed (`recalculated: false`). Delay recalculation only begins after the operator presses "Ready to Wash".
-
----
-
-## Vehicle Ownership, Color and Per-Client Visibility (Phase 20)
-
-Phase 20 introduces client ownership attribution, vehicle visual attributes (`color`), contact owner metadata (`ownerName`), and strict per-client visibility rules for personal vehicle tracking.
-
----
-
-### 1. New Vehicle Fields
-
-When an operator registers a vehicle or updates its owner, the following attributes are supported:
-
-| Field | Type | Required | Description |
-| :--- | :--- | :---: | :--- |
-| `placa` | string | ✅ | Canonical plate in format `XXX-123` (normalized to uppercase) |
-| `marca` | string | ✅ | Vehicle manufacturer (e.g. `Mazda`, `Toyota`) |
-| `modelo` | string | ✅ | Vehicle model (e.g. `CX-50`, `Corolla`) |
-| `color` | string | ✅ | Visual color (1 to 30 characters, e.g. `Rojo`, `Blanco`) |
-| `ownerName` | string | ✅ | Full name of owner (2 to 80 characters, e.g. `Edgar Arteaga`) |
-| `ownerEmail` | string (email) | Optional | Email of registered `CLIENTE` account to associate vehicle ownership |
-| `ownerId` | integer (FK) | Automatic | Linked `User.id` when `ownerEmail` is provided or updated |
-| `nivelSuciedad` | string (enum) | Optional | `Leve` \| `Moderado` \| `Severo` (assessed by AI in a future phase) |
-
----
-
-### 2. Ownership & Client Visibility Rules
-
-The API enforces strict data isolation based on authenticated JWT user roles:
-
-* **`OPERARIO` (Workshop Staff):**
-  * Retains complete administrative and operational visibility across the entire workshop.
-  * Can register vehicles, link owners, create orders, advance phases, view all vehicle catalogs, and inspect workshop-wide metrics.
-
-* **`CLIENTE` (Vehicle Owner):**
-  * **Catalog List (`GET /api/vehicles`):** Automatically filtered. Clients only see vehicles where `vehicle.ownerId === req.user.id`. Search (`?search=...`) and pagination operate exclusively within the client's own vehicles.
-  * **Vehicle Detail (`GET /api/vehicles/:id`):** Requesting a vehicle owned by another user or without an owner returns HTTP `404 Not Found` (avoids disclosing whether the vehicle exists).
-  * **Orders List (`GET /api/orders`):** Automatically filtered to orders for vehicles owned by the client.
-  * **Predictions (`GET /api/orders/:id/prediction`):** Restricted to the owner. Returns HTTP `404 Not Found` if requested by another client.
-  * **Photographic Evidence (`GET /api/orders/:orderId/evidence`):** Restricted exclusively to `OPERARIO`. Any `CLIENTE` (even the vehicle owner) receives HTTP `403 Forbidden` as workshop cameras and photos are strictly private to the shop.
-  * **Bays & Packages (`GET /api/bays`, `GET /api/packages`):** Freely accessible to all authenticated roles.
-
----
-
-### 3. Operator Workflow Example
-
-1. **Register a Vehicle with Owner Account:**
+5. **Seed the database (Demo Accounts):**
    ```bash
-   curl -X POST "http://localhost:3000/api/vehicles" \
-     -H "Authorization: Bearer <OPERATOR_JWT>" \
-     -H "Content-Type: application/json" \
-     -d '{
-       "placa": "XYZ-123",
-       "marca": "Mazda",
-       "modelo": "CX-50",
-       "color": "Rojo",
-       "ownerName": "Edgar Arteaga",
-       "ownerEmail": "cliente@autoclean.com"
-     }'
+   node prisma/seed.js
    ```
-   *If `ownerEmail` is not found, returns `404 OWNER_NOT_FOUND`. If the user is an `OPERARIO`, returns `400 INVALID_OWNER`.*
+   *Seeds default demo accounts: `operario@autoclean.com` and `cliente@autoclean.com` (password: `Demo12345!`), sample bays, and service packages.*
 
-2. **Link or Transfer Owner Account Later:**
+6. **Start the development server:**
    ```bash
-   curl -X PATCH "http://localhost:3000/api/vehicles/1/owner" \
-     -H "Authorization: Bearer <OPERATOR_JWT>" \
-     -H "Content-Type: application/json" \
-     -d '{ "ownerEmail": "cliente@autoclean.com" }'
+   npm run dev
    ```
+   The API will be available at `http://localhost:3000`.
+   * Health Check: `http://localhost:3000/api/health`
+   * Interactive Swagger UI: `http://localhost:3000/api/docs`
 
-3. **Owner Client Views Own Vehicles:**
+7. **Execute test suite:**
    ```bash
-   curl -X GET "http://localhost:3000/api/vehicles" \
-     -H "Authorization: Bearer <CLIENT_JWT>"
+   npm test
    ```
 
 ---
 
-### 4. Known Limitations & Security Roadmap
+## 4. Environment Variables
 
-> [!NOTE]
-> **Static Evidence Access:** Photo evidence files stored on disk and served statically at `/evidence/*` are publicly accessible by their direct URL using high-entropy random filenames. In an upcoming phase, static file serving will be migrated to authenticated streams or signed temporary URLs.
-
----
-
-## JWT Authentication with Roles (Phase 19)
-
-The backend implements stateless JWT-based authentication and Role-Based Access Control (RBAC) with two primary user roles:
-* **`OPERARIO`**: Car wash staff responsible for physical workshop operations (registering vehicles, creating orders, updating wash phases, uploading photographic evidence, and inspecting bay utilization).
-* **`CLIENTE`**: Car owners using mobile/web interfaces for read-only tracking and inspection of service progress, predictions, and photographic evidence.
-
----
-
-### 1. Authentication Architecture & Flow
-
-* **Self-Registration (`POST /api/auth/register`):**
-  * Public endpoint for new users.
-  * Required fields: `nombre`, `email`, `password` (minimum 8 characters).
-  * **Role Restriction:** Public registration **ALWAYS** assigns the role `CLIENTE`. Any `rol` field supplied in the request body is strictly ignored to prevent privilege escalation.
-  * Duplicate email addresses return HTTP `409 Conflict` with unified error code `DUPLICATE_RESOURCE`.
-  * Response returns HTTP `201 Created` with user details (excluding `passwordHash`).
-
-* **Login (`POST /api/auth/login`):**
-  * Required fields: `email`, `password`.
-  * Returns a signed JWT token along with sanitized user info:
-    ```json
-    {
-      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-      "user": {
-        "id": 1,
-        "nombre": "Operario Demo",
-        "email": "operario@autoclean.com",
-        "rol": "OPERARIO"
-      }
-    }
-    ```
-  * **Anti-User-Enumeration Protection:** Unknown email addresses and incorrect passwords return identical HTTP `401 Unauthorized` responses with code `INVALID_CREDENTIALS` and the message `"Invalid email or password"`.
-
-* **Authenticated Profile (`GET /api/auth/me`):**
-  * Requires valid `Authorization: Bearer <token>` header.
-  * Returns the currently authenticated user's profile (`id`, `nombre`, `email`, `rol`, `createdAt`).
-
-* **Password Security:**
-  * Passwords hashed using `bcryptjs` with salt rounds = 10.
-  * `passwordHash` is never selected, returned in API payloads, or exposed in logs.
-
-* **Rate Limiting Protection:**
-  * Auth endpoints (`/api/auth/register`, `/api/auth/login`) are protected by a strict dedicated rate limiter (`RATE_LIMIT_AUTH_MAX`, default 10 requests per minute per IP) to mitigate brute-force and credential stuffing attacks.
-
----
-
-### 2. Roles & Permissions Matrix
-
-| Endpoint | Method | Public | `CLIENTE` | `OPERARIO` | Notes |
-| :--- | :---: | :---: | :---: | :---: | :--- |
-| `/api/health` | `GET` | ✅ | ✅ | ✅ | System health probe |
-| `/api/docs*` | `GET` | ✅ | ✅ | ✅ | Interactive Swagger UI & OpenAPI spec |
-| `/evidence/*` | `GET` | ✅ | ✅ | ✅ | Static evidence photo asset delivery |
-| `/api/auth/register` | `POST` | ✅ | ✅ | ✅ | Self-registration (always creates `CLIENTE`) |
-| `/api/auth/login` | `POST` | ✅ | ✅ | ✅ | Issues signed JWT token |
-| `/api/auth/me` | `GET` | ❌ | ✅ | ✅ | Returns current user profile |
-| `/api/vehicles` | `GET` | ❌ | ✅ (Own) | ✅ (All) | List & search vehicles (paginated) |
-| `/api/vehicles/:id` | `GET` | ❌ | ✅ (Own) | ✅ (All) | Retrieve vehicle details |
-| `/api/vehicles` | `POST` | ❌ | ❌ (403) | ✅ | Register new workshop vehicle |
-| `/api/vehicles/:id/owner` | `PATCH` | ❌ | ❌ (403) | ✅ | Link or update vehicle owner by client email |
-| `/api/phases` | `GET` | ❌ | ✅ | ✅ | Wash phase catalog with display labels and progress |
-| `/api/orders` | `GET` | ❌ | ✅ (Own) | ✅ (All) | List & filter orders (paginated) |
-| `/api/orders/:id` | `GET` | ❌ | ✅ (Own) | ✅ (All) | Order details with bay & package info |
-| `/api/orders/:id/timeline` | `GET` | ❌ | ✅ (Own) | ✅ (All) | Chronological phase events audit trail |
-| `/api/orders` | `POST` | ❌ | ❌ (403) | ✅ | Create new service order |
-| `/api/orders/:id/ready` | `POST` | ❌ | ❌ (403) | ✅ | Mark order ready to wash (OPERARIO only) |
-| `/api/orders/:id/analyze` | `POST` | ❌ | ❌ (403) | ✅ | AI camera frame plate & wash phase analysis |
-| `/api/orders/:id/analyses` | `GET` | ❌ | ❌ (403) | ✅ | Paginated AI analysis history for order |
-| `/api/ai/status` | `GET` | ❌ | ❌ (403) | ✅ | Runtime AI subsystem mode & status probe |
-| `/api/orders/:id/phase` | `PATCH` | ❌ | ❌ (403) | ✅ | Manual phase transition |
-| `/api/orders/:id/simulate/*` | `POST` | ❌ | ❌ (403) | ✅ | Demo simulation controls (advance/pause/resume) |
-| `/api/orders/:orderId/evidence` | `POST` | ❌ | ❌ (403) | ✅ | Upload photographic evidence |
-| `/api/orders/:orderId/evidence` | `GET` | ❌ | ✅ | ✅ | List photo evidence for order |
-| `/api/orders/track/:placa` | `GET` | ❌ | ✅ | ✅ | Read-only order tracking with AI prediction |
-| `/api/orders/:id/prediction` | `GET` | ❌ | ✅ | ✅ | AI completion time prediction |
-| `/api/bays` | `GET` | ❌ | ✅ | ✅ | List washing bays |
-| `/api/bays/summary` | `GET` | ❌ | ❌ (403) | ✅ | Real-time bay occupancy metrics badge |
-| `/api/packages` | `GET` | ❌ | ✅ | ✅ | List service packages |
-
----
-
-### 3. Demo Credentials
-
-The database seed (`npm run prisma:seed` or `npx prisma db seed`) populates two demo accounts for testing:
-
-| Role | Email | Password | Access Level |
-| :--- | :--- | :--- | :--- |
-| **`OPERARIO`** | `operario@autoclean.com` | `Demo12345!` | Full operational privileges (create orders, advance phases, upload evidence, view bay summary) |
-| **`CLIENTE`** | `cliente@autoclean.com` | `Demo12345!` | Read-only tracking privileges (tracking by plate, orders list, predictions, evidence) |
-
-> [!IMPORTANT]
-> **DEMO ONLY:** These accounts and passwords are provided strictly for local development and demonstration. They must never be deployed or used in production environments.
-
----
-
-### 4. Interactive Testing with Swagger UI ("Authorize" Button)
-
-The OpenAPI 3.0 documentation supports interactive JWT testing directly in your browser:
-
-1. Open [http://localhost:3000/api/docs](http://localhost:3000/api/docs) in your browser.
-2. In the **Authentication** section, expand `POST /api/auth/login` and click **Try it out**.
-3. In the request body, enter the demo credentials for an operario or cliente:
-   ```json
-   {
-     "email": "operario@autoclean.com",
-     "password": "Demo12345!"
-   }
-   ```
-4. Click **Execute**. In the response body, copy the string value inside the `"token"` field.
-5. Scroll to the top of the page and click the green **Authorize** 🔓 button.
-6. In the modal, paste the copied token into the **Value** field and click **Authorize**, then click **Close**. The lock icon will change to locked (🔒).
-7. Now all protected requests (e.g., `POST /api/orders`, `GET /api/bays/summary`, or `GET /api/auth/me`) will automatically transmit the `Authorization: Bearer <token>` header when you execute them!
-
----
-
-## Security & Configuration (Phase 18)
-
-The backend incorporates production-grade HTTP security, Zod-based environment validation, CORS policies optimized for mobile clients, granular rate limiting, and request payload size defenses.
-
-### 1. Environment Variables & Validation
-
-Environment variables are validated on startup via Zod in `src/config/env.js`. If any required variable is missing or invalid, the server logs a detailed error identifying the problem variable and terminates immediately (`exit(1)`).
+All variables are validated at server startup using Zod schemas (`src/config/env.js`). If any required variable is missing or malformed, the server prints a descriptive error and halts immediately.
 
 | Variable | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `PORT` | number | `3000` | Port on which the HTTP server listens |
-| `NODE_ENV` | `development` \| `test` \| `production` | `development` | Runtime environment mode |
-| `DATABASE_URL` | string | *Required* | Prisma connection URI (e.g. `file:./prisma/dev.db`) |
-| `SIMULATION_PHASE_DURATION_MS` | number | `60000` | Duration of each wash cycle phase in ms |
-| `CORS_ORIGINS` | string | `*` | Comma-separated list of allowed origins (or `*` for all) |
-| `RATE_LIMIT_WINDOW_MS` | number | `60000` | Time window for rate limiting in ms |
-| `RATE_LIMIT_MAX` | number | `100` | Max requests per IP in window for `/api` routes |
-| `RATE_LIMIT_EVIDENCE_MAX` | number | `20` | Max requests per IP in window for evidence upload |
-| `RATE_LIMIT_AUTH_MAX` | number | `10` | Max requests per IP in window for auth routes |
-| `JWT_SECRET` | string | *Required (min 32 chars)* | Secret key used to sign and verify JWT tokens |
-| `JWT_EXPIRES_IN` | string | `1d` | Expiration time for generated JWT tokens (e.g. `1d`, `12h`) |
-| `SIMULATION_AUTO_ADVANCE` | boolean | `true` | When true, simulation automatically advances ready orders. When false, scheduler is idle |
-| `GEMINI_API_KEY` | string | Optional | Google AI Studio API key for Gemini multimodal vision |
-| `GEMINI_MODEL` | string | `gemini-3.1-flash-lite` | Model identifier for camera frame analysis |
-| `AI_MODE` | `auto` \| `gemini` \| `simulated` | `auto` | AI engine mode (auto resolves to Gemini if key is set, else simulated) |
-| `AI_FALLBACK_TO_SIMULATED` | boolean | `true` | Fallback to simulated provider when Gemini errors or quota is exhausted |
-| `AI_MIN_CONFIDENCE` | number | `0.6` | Minimum confidence threshold (0.0 - 1.0) for plate recognition and wash phase |
-| `GEMINI_TIMEOUT_MS` | number | `20000` | Timeout in milliseconds for Gemini API requests |
-| `RATE_LIMIT_AI_MAX` | number | `10` | Max requests per IP in window for AI camera frame analysis |
+|---|---|---|---|
+| `DATABASE_URL` | String | *Required* (`file:./dev.db`) | SQLite database file connection string for Prisma. |
+| `PORT` | Integer | `3000` | HTTP listening port for the Express application. |
+| `NODE_ENV` | String | `development` | Environment mode: `development`, `test`, or `production`. |
+| `JWT_SECRET` | String | *Required* (min 32 chars) | Secret key used to sign and verify JSON Web Tokens. |
+| `JWT_EXPIRES_IN` | String | `1d` | Token expiration duration (e.g., `1d`, `12h`). |
+| `CORS_ORIGINS` | String | `*` | Comma-separated list of allowed origins or `*` to allow all. |
+| `RATE_LIMIT_WINDOW_MS` | Integer | `60000` | Rate limiting rolling window in milliseconds (1 minute). |
+| `RATE_LIMIT_MAX` | Integer | `100` | Maximum requests per window across general `/api` endpoints. |
+| `RATE_LIMIT_EVIDENCE_MAX` | Integer | `20` | Max photo evidence uploads per window across `/api/orders/:id/evidence`. |
+| `RATE_LIMIT_AI_MAX` | Integer | `10` | Max camera analysis calls per window across `/api/orders/:id/analyze`. |
+| `PLATE_LOOKUP_RATE_LIMIT_PER_MINUTE` | Integer | `30` | Max license plate status lookups per minute per IP / user. |
+| `SIMULATION_AUTO_ADVANCE` | Boolean | `true` | Enables or disables background simulation scheduler. |
+| `SIMULATION_PHASE_DURATION_MS` | Integer | `60000` | Phase duration for demo auto-advancement (in milliseconds). |
+| `AI_MODE` | String | `auto` | AI analysis provider mode: `auto`, `gemini`, or `simulated`. |
+| `GEMINI_API_KEY` | String | Optional (`""`) | Google AI Studio API key (required if `AI_MODE=gemini`). |
+| `GEMINI_MODEL` | String | `gemini-3.1-flash-lite` | Gemini vision model identifier. |
+| `AI_FALLBACK_TO_SIMULATED` | Boolean | `true` | Fallback to simulated provider on Gemini errors (429 quota, timeouts). |
+| `AI_MIN_CONFIDENCE` | Float | `0.6` | Minimum confidence threshold (0.0 to 1.0) for detections. |
+| `GEMINI_TIMEOUT_MS` | Integer | `20000` | Timeout in milliseconds for Google Gemini requests. |
+| `PHASE_ETA_MINUTES` | JSON String | Optional | JSON string overriding default wash phase minutes for realistic ETA. |
 
 ---
 
-### 2. CORS Setup for Mobile & Hybrid Clients
+## 5. Roles & Permissions Matrix
 
-* **Native Mobile Apps & CLI (`curl`, Postman):** Send no `Origin` header. Requests without an `Origin` header are **always permitted**.
-* **Web / Hybrid Mobile Apps:** Validated against `CORS_ORIGINS`. If `CORS_ORIGINS=*`, all origins are allowed. If set to a comma-separated list (e.g., `https://mobile.autoclean.com,https://dashboard.autoclean.com`), only requests matching one of the whitelisted origins receive the `Access-Control-Allow-Origin` header.
-* **Allowed Methods:** `GET`, `POST`, `PATCH`, `OPTIONS`.
-* **Allowed Headers:** `Content-Type`, `Authorization` (configured for upcoming JWT token authentication).
-* **Preflight Handling:** Full preflight `OPTIONS` requests handled automatically with HTTP 200/204.
+AutoClean AI enforces role-based access control (RBAC) across two roles:
+* **`OPERARIO` (Staff / Operator):** Full operational management over bays, vehicles, orders, photo evidences, AI camera audits, demo simulation triggers, and deliveries.
+* **`CLIENTE` (Vehicle Owner / Customer):** Read-only visibility strictly restricted to own vehicles, active orders, and personal plate search history. **Clients are strictly forbidden from viewing or uploading photographic evidence.**
 
----
+| Endpoint | Method | Public | CLIENTE | OPERARIO | Notes |
+|---|---|:---:|:---:|:---:|---|
+| `/api/health` | GET | ✔ | ✔ | ✔ | Service liveness probe |
+| `/api/docs` & `/api/docs.json` | GET | ✔ | ✔ | ✔ | Interactive Swagger UI and OpenAPI schema |
+| `/api/auth/register` | POST | ✔ | ✔ | ✔ | Register new customer or operator |
+| `/api/auth/login` | POST | ✔ | ✔ | ✔ | Authenticate credentials & receive JWT |
+| `/api/auth/me` | GET | ❌ | ✔ | ✔ | Retrieve current authenticated user profile |
+| `/api/plates/:placa/status` | GET | ❌ | ✔ | ✔ | Minimal status view; logs history for CLIENTE |
+| `/api/me/plates` | GET | ❌ | ✔ | ❌ (403) | Retrieve customer search history (max 10) |
+| `/api/me/plates/:placa` | DELETE | ❌ | ✔ | ❌ (403) | Remove plate from customer search history |
+| `/api/orders/track/:placa` | GET | ❌ | ✔ (Own only) | ✔ | Active order tracking with ETA |
+| `/api/orders` | GET | ❌ | ✔ (Own only) | ✔ (All) | Filter by status, plate, phase, bay |
+| `/api/orders/:id/timeline` | GET | ❌ | ✔ (Own only) | ✔ | Chronological phase events and delivery audit |
+| `/api/orders/:id/prediction` | GET | ❌ | ✔ (Own only) | ✔ | Completion prediction analytics |
+| `/api/vehicles` | GET | ❌ | ✔ (Own only) | ✔ (All) | List registered vehicles |
+| `/api/vehicles/:id` | GET | ❌ | ✔ (Own only) | ✔ | Vehicle details |
+| `/api/orders` | POST | ❌ | ❌ (403) | ✔ | Create new order (enforces 1 active/plate) |
+| `/api/orders/:id/ready` | POST | ❌ | ❌ (403) | ✔ | Mark order ready to wash (`listoParaLavar`) |
+| `/api/orders/:id/phase` | PATCH | ❌ | ❌ (403) | ✔ | Manually update order phase |
+| `/api/orders/:id/deliver` | POST | ❌ | ❌ (403) | ✔ | Deliver completed vehicle (race-safe) |
+| `/api/orders/:id/evidence` | GET, POST | ❌ | ❌ (403) | ✔ | Evidence photos restricted to operators |
+| `/api/orders/:id/analyze` | POST | ❌ | ❌ (403) | ✔ | AI Vision plate detection & phase transition |
+| `/api/orders/:id/analyses` | GET | ❌ | ❌ (403) | ✔ | Audit log of AI analysis executions |
+| `/api/ai/status` | GET | ❌ | ❌ (403) | ✔ | Operational status of AI engine |
+| `/api/orders/:id/simulate/*` | POST | ❌ | ❌ (403) | ✔ | Demo controls (`advance`, `reset`, `complete`) |
+| `/api/vehicles` | POST | ❌ | ❌ (403) | ✔ | Register vehicle into the system |
+| `/api/vehicles/:id/owner` | PATCH | ❌ | ❌ (403) | ✔ | Transfer vehicle ownership |
+| `/api/bays` & `/api/bays/summary` | GET | ❌ | ❌ (403) | ✔ | Washing bay availability & assignments |
+| `/api/packages` | GET | ❌ | ❌ (403) | ✔ | Wash service packages |
+| `/evidence/:filename` | GET | ✔* | ✔* | ✔* | Direct static asset access via unguessable URL |
 
-### 3. Helmet & HTTP Headers
-
-* **`x-powered-by`:** Disabled across all responses to prevent framework fingerprinting.
-* **Security Headers:** Standard Helmet protection applied globally (e.g., `X-Content-Type-Options: nosniff`).
-* **Swagger UI Exception:** Content-Security-Policy (CSP) is relaxed specifically on `/api/docs` so Swagger UI scripts, inline styles, and web assets render interactively.
-* **Cross-Origin Evidence Access:** `Cross-Origin-Resource-Policy: cross-origin` is applied to `/evidence` static files so that mobile applications and external frontends can render uploaded photos without browser blocking.
-
----
-
-### 4. Rate Limiting Behavior
-
-* **Global Limiter (`/api/*`):** Allows up to `RATE_LIMIT_MAX` (default 100) requests per `RATE_LIMIT_WINDOW_MS` (default 60 seconds) per IP.
-* **Evidence Upload Limiter:** Stricter limiter on `POST /api/orders/:orderId/evidence` (`RATE_LIMIT_EVIDENCE_MAX`, default 20 req/min) to prevent disk and network abuse.
-* **Exempt Routes:** `GET /api/health` and `/api/docs` are never rate-limited.
-* **Test Mode:** Automatically skipped when `NODE_ENV === "test"` (unless `RATE_LIMIT_MAX` is specifically set low to test rate limiting) to ensure test suites run smoothly.
-* **Unified 429 Response Format:**
-  ```json
-  {
-    "error": {
-      "code": "RATE_LIMITED",
-      "message": "Too many requests, please try again later."
-    }
-  }
-  ```
-* Standard headers `RateLimit-Limit`, `RateLimit-Remaining`, and `RateLimit-Reset` are sent with every response.
-
----
-
-### 5. Request Body Size Limits
-
-* **JSON Limit:** Express parses JSON bodies up to `100kb` (`express.json({ limit: '100kb' })`).
-* **Payload Too Large (413):** Requests exceeding the limit return HTTP 413 in the unified error format:
-  ```json
-  {
-    "error": {
-      "code": "PAYLOAD_TOO_LARGE",
-      "message": "Request payload exceeds the maximum allowed limit of 100 KB"
-    }
-  }
-  ```
+*\* Evidence files are served with unguessable random names. See Section 9 for privacy details.*
 
 ---
 
-## Search, Filters, Pagination and Bay Summary (Phase 17)
-
-To optimize mobile performance and avoid unbounded queries on client devices, list endpoints return a standard pagination envelope. The API provides robust filtering by phase, bay, plate, search across vehicles, and an operator bay summary badge endpoint.
-
-### Standard Pagination Envelope
-
-`GET /api/vehicles` and `GET /api/orders` wrap their collections in a uniform JSON envelope:
-
-```json
-{
-  "data": [
-    { /* entity record */ }
-  ],
-  "meta": {
-    "page": 1,
-    "limit": 10,
-    "total": 24,
-    "totalPages": 3
-  }
-}
-```
-
-* **Out-of-range pages:** Requesting a page beyond `totalPages` (e.g., `?page=999`) returns HTTP 200 with `data: []` and accurate `meta` counters.
-
-### 1. Vehicle Search & Pagination (`GET /api/vehicles`)
-
-Supports full-text partial search matching license plate (`placa`), make (`marca`), or model (`modelo`) using case-insensitive ASCII LIKE matching, ordered by `createdAt desc`.
-
-* **Query Parameters:**
-  * `page` (optional integer, min: 1, default: `1`)
-  * `limit` (optional integer, min: 1, max: 50, default: `10`)
-  * `search` (optional string, 1 to 20 characters)
-
-**Example cURL:**
-```bash
-# Search vehicles for "maz" with limit 5
-curl "http://localhost:3000/api/vehicles?search=maz&page=1&limit=5"
-```
-
----
-
-### 2. Order Filters, Sorting & Pagination (`GET /api/orders`)
-
-Supports comprehensive relational filters, phase matching, active order exclusion, timestamp sorting, and pagination.
-
-* **Query Parameters:**
-  * `page` (optional integer, min: 1, default: `1`)
-  * `limit` (optional integer, min: 1, max: 50, default: `10`)
-  * `placa` (optional string, normalized to uppercase, partial match on vehicle plate)
-  * `fase` (optional enum: `"PENDIENTE" | "REMOJO" | "LAVADO" | "SECADO" | "LISTO"`)
-  * `bayId` (optional positive integer)
-  * `activeOnly` (optional boolean string: `"true"` excludes orders in `LISTO`)
-  * `sort` (optional enum: `"newest" | "oldest"`, default: `"newest"`)
-
-**Example cURLs:**
-```bash
-# Filter active orders in LAVADO phase, newest first
-curl "http://localhost:3000/api/orders?fase=LAVADO&activeOnly=true&sort=newest"
-
-# Filter orders by vehicle plate
-curl "http://localhost:3000/api/orders?placa=XYZ&page=1&limit=10"
-```
-
----
-
-### 3. Bay Occupancy Summary (`GET /api/bays/summary`)
-
-Provides real-time occupancy statistics from the `Bay` table to feed the operator UI badge (e.g., *"Bahías: 2/4 Ocupadas"*).
-
-* **Endpoint:** `GET /api/bays/summary`
-* **Response (200 OK):**
-  ```json
-  {
-    "total": 4,
-    "occupied": 2,
-    "free": 2
-  }
-  ```
-
-**Example cURL:**
-```bash
-curl http://localhost:3000/api/bays/summary
-```
-
----
-
-## Interactive API Documentation with Swagger/OpenAPI (Phase 16)
-
-The API includes comprehensive OpenAPI 3.0.3 documentation with interactive Swagger UI, enabling mobile developers (Android & iOS) to explore, inspect schemas, and test all endpoints without reading backend code.
-
-* **Interactive Swagger UI:** [http://localhost:3000/api/docs](http://localhost:3000/api/docs)
-* **Raw OpenAPI 3.0 JSON Spec:** [http://localhost:3000/api/docs.json](http://localhost:3000/api/docs.json)
-
-### How to Try the Car Wash Simulation from Swagger UI
-
-Open [http://localhost:3000/api/docs](http://localhost:3000/api/docs) in your browser and follow this step-by-step interactive workflow:
-
-1. **Register a Vehicle (`POST /api/vehicles`):**
-   * Expand the `POST /api/vehicles` endpoint under the **Vehicles** tag and click **Try it out**.
-   * Use the sample payload (plate in `XXX-123` format):
-     ```json
-     {
-       "placa": "XYZ-123",
-       "marca": "Mazda",
-       "modelo": "CX-5",
-       "nivelSuciedad": "Moderado"
-     }
-     ```
-   * Click **Execute**. Verify the `201 Created` response and note the returned vehicle `id` (e.g. `1`).
-
-2. **Create a Service Order (`POST /api/orders`):**
-   * Expand `POST /api/orders` under the **Orders** tag and click **Try it out**.
-   * Assign the vehicle to an available bay and package:
-     ```json
-     {
-       "vehicleId": 1,
-       "packageId": 1,
-       "bayId": 1
-     }
-     ```
-   * Click **Execute**. The order is created in initial phase `"PENDIENTE"` with `10%` progress and `listoParaLavar: false`. Note the order `id`.
-
-3. **Mark Ready to Wash (`POST /api/orders/{id}/ready`):**
-   * Expand `POST /api/orders/{id}/ready` under **Orders** and click **Try it out**.
-   * Enter the order `id` and click **Execute**.
-   * The order is marked ready (`listoParaLavar: true`, `readyAt: timestamp`), and the simulation begins tracking the wash.
-
-4. **Advance Phase via Demo Controls (`POST /api/orders/{id}/simulate/advance`):**
-   * Expand `POST /api/orders/{id}/simulate/advance` under the **Simulation** tag and click **Try it out**.
-   * Enter the order `id` and click **Execute**.
-   * The order advances to `"REMOJO"` (`30%`), and subsequent advances move to `"LAVADO"` (`55%`), `"SECADO"` (`80%`), and `"LISTO"` (`100%`).
-
-5. **Upload Photo Evidence (`POST /api/orders/{orderId}/evidence`):**
-   * Expand `POST /api/orders/{orderId}/evidence` under the **Evidence** tag and click **Try it out**.
-   * Enter the order `id`, choose an image file (JPEG, PNG, or WEBP under 5 MB) via the file picker, and set `etapa` to `"LAVADO"`.
-   * Click **Execute** and verify the `201 Created` response with the static image URL.
-
-6. **Track Vehicle with AI Prediction (`GET /api/orders/track/{placa}`):**
-   * Expand `GET /api/orders/track/{placa}` under the **Orders** tag and click **Try it out**.
-   * Enter plate `"XYZ-123"` and click **Execute**.
-   * Inspect the returned payload containing the vehicle, bay, package, current progress, and embedded `prediction`:
-     ```json
-     {
-       "id": 1,
-       "faseActual": "LAVADO",
-       "porcentajeProgreso": 55,
-       "listoParaLavar": true,
-       "prediction": {
-         "estimatedDeliveryTime": "2026-10-23T17:35:00.000Z",
-         "accuracyPercentage": 94,
-         "recalculated": false,
-         "message": null
-       }
-     }
-     ```
-
-7. **Complete the Order (`POST /api/orders/{id}/simulate/complete`):**
-   * Expand `POST /api/orders/{id}/simulate/complete` under **Simulation** and click **Execute**.
-   * The order transitions to `"LISTO"` (100% progress) and frees the bay. Checking prediction now yields `accuracyPercentage: 100`.
-
----
-
-## Centralized Error Handling (Phase 15)
-
-The API enforces a single, uniform JSON error format across all endpoints (validation, business conflicts, not found, upload errors, unhandled exceptions, and unknown routes) to provide predictable error parsing for mobile clients (Android & iOS).
-
-### Unified Error Format
-
-```json
-{
-  "error": {
-    "code": "STRING_CODE",
-    "message": "Human-readable error description",
-    "details": [
-      {
-        "field": "placa",
-        "message": "Placa must be in format XXX-123 (three letters, hyphen, three digits)"
-      }
-    ]
-  }
-}
-```
-> Note: The `details` array is included only when field-specific information is available (such as schema validation errors).
-
-### Error Codes Reference
-
-| Error Code | HTTP Status | Description / Trigger Scenario |
-|---|---|---|
-| `ROUTE_NOT_FOUND` | `404 Not Found` | Request sent to an unregistered route or HTTP method |
-| `NOT_FOUND` | `404 Not Found` | Requested vehicle, service order, bay, or package was not found |
-| `OWNER_NOT_FOUND` | `404 Not Found` | Owner user not found by email when assigning vehicle ownership |
-| `VALIDATION_ERROR` | `400 Bad Request` | Zod schema validation failed on body, params, or query |
-| `INVALID_JSON` | `400 Bad Request` | Malformed JSON payload sent in request body |
-| `INVALID_REFERENCE` | `400 Bad Request` | Prisma foreign key reference failure |
-| `INVALID_OWNER` | `400 Bad Request` | User specified as vehicle owner does not have CLIENTE role |
-| `ORDER_COMPLETED` | `400 Bad Request` | Attempted to force-advance an order that is already completed (`LISTO`) |
-| `FILE_MISSING` | `400 Bad Request` | Evidence upload endpoint called without an image file |
-| `INVALID_FILE_TYPE` | `400 Bad Request` | Uploaded file is not JPEG, PNG, or WEBP |
-| `FILE_TOO_LARGE` | `413 Payload Too Large` | Uploaded file exceeds the 5 MB maximum size limit |
-| `PAYLOAD_TOO_LARGE` | `413 Payload Too Large` | Request JSON body exceeds 100 KB limit |
-| `DUPLICATE_RESOURCE` | `409 Conflict` | Unique constraint violation (e.g. vehicle plate already exists) |
-| `BAY_OCCUPIED` | `409 Conflict` | Attempted to create a service order on an already occupied bay |
-| `ACTIVE_ORDER_EXISTS` | `409 Conflict` | Vehicle already has an active (undelivered) service order |
-| `NOT_FINISHED` | `409 Conflict` | Order cannot be delivered until it reaches `LISTO` phase |
-| `ALREADY_DELIVERED` | `409 Conflict` | Order is already delivered; modifications blocked |
-| `ALREADY_READY` | `409 Conflict` | Order is already marked as ready to wash |
-| `INVALID_STATE` | `409 Conflict` | Order must be in `PENDIENTE` phase to mark ready to wash |
-| `NOT_READY` | `409 Conflict` | Order is not marked ready to wash before attempting wash advance |
-| `WRONG_VEHICLE` | `409 Conflict` | License plate detected in image does not match order's vehicle |
-| `PLATE_UNREADABLE` | `422 Unprocessable Entity` | License plate in photo cannot be recognized with sufficient confidence |
-| `RATE_LIMITED` | `429 Too Many Requests` | Global or endpoint rate limit exceeded |
-| `INTERNAL_ERROR` | `500 Internal Server Error` | Unexpected unhandled server exception |
-
-### Production vs Development Behavior
-* **Production (`NODE_ENV=production`):** Internal error details and stack traces are strictly suppressed to prevent security leaks. Unhandled exceptions return generic `Internal Server Error`.
-* **Development:** The complete error stack trace is returned in an adjacent `stack` field for rapid debugging.
-* **Console Logging:** All errors are logged to `console.error` with full stack traces regardless of environment.
-* **Process Resilience:** Process-level listeners (`unhandledRejection` and `uncaughtException`) protect the Node process from silent failure, and simulation scheduler loops are wrapped in safe error catchers.
-
----
-
-## Input Validation with Zod (Phase 14)
-
-All request inputs (body and route parameters) are validated using schemas built with **Zod** via the centralized `validate(schema, source)` middleware, throwing `AppError` mapped to `VALIDATION_ERROR`.
-
-### Schema Rules & Normalization
-
-1. **Vehicles (`POST /api/vehicles`):**
-   * `placa`: Required string. Formatted as three letters, hyphen, and three digits (`XXX-123`). Automatically normalized to uppercase (e.g., `"xyz-123"` becomes `"XYZ-123"`).
-   * `marca`: Required non-empty string.
-   * `modelo`: Required non-empty string.
-   * `nivelSuciedad`: Required enum with values: `"Leve" | "Moderado" | "Severo"`.
-
-2. **Service Orders (`POST /api/orders`, `PATCH /api/orders/:id/phase`):**
-   * `vehicleId`: Required positive integer (coerced).
-   * `packageId`: Optional positive integer (coerced).
-   * `bayId`: Optional positive integer (coerced). If the designated bay is already occupied (`ocupada: true`), returns `409 Conflict` with code `"BAY_OCCUPIED"`.
-   * `faseActual`: Validated against canonical phases: `"PENDIENTE" | "REMOJO" | "LAVADO" | "SECADO" | "LISTO"`.
-
-3. **Common Route Parameters:**
-   * `:id` / `:orderId`: Coerced positive integers. Non-numeric or negative values return `400 Bad Request` with code `"VALIDATION_ERROR"`.
-   * `:placa`: Validated against `XXX-123` pattern and normalized to uppercase.
-
-4. **Evidence Uploads (`POST /api/orders/:orderId/evidence`):**
-   * Validates `:orderId` parameter before file processing.
-   * `etapa`: Optional string validated against canonical phases (`PENDIENTE`, `REMOJO`, `LAVADO`, `SECADO`, `LISTO`).
-   * **Orphan File Cleanup:** If Multer persists an uploaded image and subsequent validation fails (such as an invalid `etapa`), the temporary file is immediately removed from disk to avoid orphan artifacts.
-
----
-
-## Demo Control Endpoints (Phase 12)
-
-Manual override endpoints designed for live presentations and UI testing, allowing operators to force order status changes without waiting for the background simulation timer:
-
-### 1. Force Advance Phase
-Advances an active order to its next phase (`PENDIENTE -> REMOJO -> LAVADO -> SECADO -> LISTO`), recalculating progress percentage and resetting the simulation timer.
-
-* **Endpoint:** `POST /api/orders/:id/simulate/advance`
-* **Response (Success):** `200 OK` with updated order object.
-* **Response (Already Finished):** `400 Bad Request` with `{"error": {"code": "ORDER_COMPLETED", "message": "Order is already completed."}}`.
-* **Response (Not Found):** `404 Not Found` with `{"error": {"code": "NOT_FOUND", "message": "Service order not found"}}`.
-* **Console Log:** `[DEMO] Order #<id> force-advanced <currentPhase> -> <nextPhase>`
-
-**Example cURL:**
-```bash
-curl -X POST http://localhost:3000/api/orders/1/simulate/advance
-```
-
----
-
-### 2. Reset Order to Start
-Resets an order back to `faseActual: "PENDIENTE"` and `porcentajeProgreso: 10`, re-occupying the bay if free, and resetting the simulation timer to zero.
-
-* **Endpoint:** `POST /api/orders/:id/simulate/reset`
-* **Response:** `200 OK` with updated order object.
-* **Console Log:** `[DEMO] Order #<id> reset to PENDIENTE`
-
-**Example cURL:**
-```bash
-curl -X POST http://localhost:3000/api/orders/1/simulate/reset
-```
-
----
-
-### 3. Force Complete Order
-Instantly moves an order to `faseActual: "LISTO"` and `porcentajeProgreso: 100`.
-
-* **Endpoint:** `POST /api/orders/:id/simulate/complete`
-* **Response:** `200 OK` with updated order object.
-* **Console Log:** `[DEMO] Order #<id> force-completed`
-
-**Example cURL:**
-```bash
-curl -X POST http://localhost:3000/api/orders/1/simulate/complete
-```
-
----
-
-## Auto-Simulation Engine (Phase 11)
-
-The backend includes a background scheduler (`setInterval` every ~10s) that automatically advances active orders based on elapsed time:
-* **Configuration:** `SIMULATION_PHASE_DURATION_MS` in `.env` (default: `60000` = 1 minute per phase).
-* Any manual update (via standard `PATCH /api/orders/:id/phase` or demo control endpoints) updates `updatedAt`, resetting the timer so that the background scheduler never immediately overrides demo actions.
-* **Error Resilience:** The scheduler callback runs within a guarded `try/catch` block, logging `[SIMULATION] error:` to prevent background timer crashes.
-
----
-
-## AI Delivery Time Prediction (Phase 13)
-
-Simulated deterministic prediction engine providing realistic delivery time estimates and confidence percentages for client tracking:
-
-### 1. Dedicated Prediction Endpoint
-Fetches delivery prediction metrics for a specific order.
-
-* **Endpoint:** `GET /api/orders/:id/prediction`
-* **Response (Active Order - 200 OK):**
-  ```json
-  {
-    "estimatedDeliveryTime": "2026-10-19T16:05:00.000Z",
-    "accuracyPercentage": 94,
-    "recalculated": false,
-    "message": null
-  }
-  ```
-* **Response (Delayed Order - 200 OK):**
-  ```json
-  {
-    "estimatedDeliveryTime": "2026-10-19T16:07:30.000Z",
-    "accuracyPercentage": 94,
-    "recalculated": true,
-    "message": "Tiempo recalculado por posible retraso"
-  }
-  ```
-* **Response (Completed Order `LISTO` - 200 OK):**
-  ```json
-  {
-    "estimatedDeliveryTime": "2026-10-19T15:45:00.000Z",
-    "accuracyPercentage": 100,
-    "recalculated": false,
-    "message": null
-  }
-  ```
-* **Response (Not Found):** `404 Not Found` with unified format code `"NOT_FOUND"`.
-* **Response (Invalid ID):** `400 Bad Request` with unified format code `"VALIDATION_ERROR"`.
-
-**Example cURL:**
-```bash
-curl -H "Authorization: Bearer <TOKEN>" http://localhost:3000/api/orders/1/prediction
-```
-
----
-
-### 2. Vehicle Tracking with Embedded Prediction
-Retrieves current service order for a vehicle plate with prediction data embedded alongside order details.
-
-* **Endpoint:** `GET /api/orders/track/:placa`
-* **Response (200 OK):**
-  ```json
-  {
-    "id": 1,
-    "faseActual": "LAVADO",
-    "porcentajeProgreso": 45,
-    "vehicle": { "placa": "ABC-123" },
-    "package": { "nombre": "Lavado Premium" },
-    "bay": { "nombre": "Bahía 1" },
-    "prediction": {
-      "estimatedDeliveryTime": "2026-10-19T16:05:00.000Z",
-      "accuracyPercentage": 94,
-      "recalculated": false,
-      "message": null
-    }
-  }
-  ```
-
-**Example cURL:**
-```bash
-curl -H "Authorization: Bearer <TOKEN>" http://localhost:3000/api/orders/track/ABC-123
-```
-
----
-
-### Prediction Engine Rules:
-* **Remaining Time Calculation:** `(remaining phases count) * SIMULATION_PHASE_DURATION_MS`. Reuses canonical sequence `PENDIENTE (4) -> REMOJO (3) -> LAVADO (2) -> SECADO (1) -> LISTO (0)`.
-* **Deterministic Accuracy Percentage:** Pseudo-random value between `88` and `97` seeded by the order's ID. Consistent across repeated calls for the same order.
-* **Completion Handling:** When `faseActual === "LISTO"`, `estimatedDeliveryTime` returns actual finish time (`updatedAt`), `accuracyPercentage` is `100`, `recalculated` is `false`, and `message` is `null`.
-* **Delay Detection:** If elapsed time in current phase exceeds `SIMULATION_PHASE_DURATION_MS`, the order is not in `LISTO`, and `listoParaLavar === true`, flags `recalculated: true` and `message: "Tiempo recalculado por posible retraso"`. Orders that are not yet marked ready (`listoParaLavar: false`) are never flagged as delayed.
-
----
-
-## Plate Status Lookup & Search History (Phase 24)
-
-Phase 24 introduces a universal license plate status lookup for any authenticated user, user search history for clients, and strict privacy controls that keep workshop cameras and evidence photos completely confidential.
-
-### 1. Universal Plate Status Lookup
-Any authenticated user (`CLIENTE` or `OPERARIO`) can look up **any** vehicle license plate. Knowing the plate number is sufficient; there is no vehicle ownership check on this endpoint. Both roles receive the **identical minimal view**.
-
-* **Endpoint:** `GET /api/plates/:placa/status`
-* **Plate Normalization:** Automatically trims whitespace, converts lowercase to uppercase, and inserts the standard hyphen if 6 alphanumeric characters are provided without a separator (e.g. `abc123` -> `ABC-123`).
-* **Active Order Only:** Only returns the vehicle's currently active order (`deliveredAt: null`). If no car is currently being washed with that plate (the vehicle never existed, has no order, or the order was delivered), returns HTTP `404 NOT_FOUND` with the exact message: `"No hay un carro lavándose con esta placa"`.
-* **Minimal View Fields (Strict Privacy Guarantee):**
+## 6. Endpoint Reference
+
+All endpoints return JSON responses. Every authenticated endpoint requires an HTTP header:
+`Authorization: Bearer <JWT_TOKEN>`
+
+### Authentication
+* `POST /api/auth/register`: Create account (`email`, `password`, `nombre`, `rol`: `"CLIENTE"` or `"OPERARIO"`).
+* `POST /api/auth/login`: Authenticate (`email`, `password`) and receive signed JWT.
+* `GET /api/auth/me`: Profile information of the currently authenticated token.
+
+### Vehicles
+* `GET /api/vehicles`: List vehicles (paginated with `page`, `limit`, search by `placa`).
+* `POST /api/vehicles`: Register vehicle (`placa`, `marca`, `modelo`, optional `color`, optional `ownerEmail` or `ownerId`, optional `nivelSuciedad`).
+* `GET /api/vehicles/:id`: Fetch vehicle by database ID.
+* `PATCH /api/vehicles/:id/owner`: Reassign vehicle owner (`ownerEmail` or `ownerId`).
+
+### Orders & Tracking
+* `GET /api/orders`: List orders with pagination envelopes (`page`, `limit`, `placa`, `fase`, `bayId`, `active=true|false`).
+* `POST /api/orders`: Create wash order (`vehicleId`, optional `packageId`, optional `bayId`). Fails if vehicle already has an active order (`409 ACTIVE_ORDER_EXISTS`).
+* `POST /api/orders/:id/ready`: Mark order ready to begin washing (`listoParaLavar: true`).
+* `PATCH /api/orders/:id/phase`: Manually transition wash phase (`faseActual`).
+* `GET /api/orders/:id/timeline`: Chronological log of phase transitions and delivery timestamp.
+* `GET /api/orders/:id/prediction`: Machine learning/heuristic delivery time prediction.
+* `GET /api/orders/track/:placa`: Active order tracking for a license plate. Returns 404 `"No hay un carro lavándose con esta placa"` if no active order exists or if requested by a non-owner client.
+
+### Delivery
+* `POST /api/orders/:id/deliver`: Atomically marks order delivered (`deliveredAt = now`).
+  * Requires order to be in `faseActual = 'LISTO'`.
+  * Race-safe: concurrent attempts result in exactly one `200 OK` and subsequent `409 ALREADY_DELIVERED`.
+  * Locks order against any further phase modifications, AI analyses, or demo triggers.
+
+### Plate Lookup & Search History
+* `GET /api/plates/:placa/status`: Public minimal view for any authenticated user. Normalizes license plates (e.g., `abc123` -> `ABC-123`). If queried by `CLIENTE`, automatically upserts into customer's search history.
   ```json
   {
     "placa": "ABC-123",
     "marca": "Toyota",
-    "modelo": "Corolla Cross",
-    "color": "Azul",
+    "modelo": "Corolla",
+    "color": "Blanco",
     "fase": "LAVADO",
-    "porcentajeProgreso": 60,
+    "porcentajeProgreso": 55,
     "listoParaLavar": true,
     "startedAt": "2026-10-24T18:00:00.000Z",
-    "receivedAt": "2026-10-24T17:50:00.000Z",
-    "etaMinutes": 25,
-    "etaLabel": "Aprox. 25 min",
-    "estimatedReadyAt": "2026-10-24T18:25:00.000Z"
+    "receivedAt": "2026-10-24T17:45:00.000Z",
+    "etaMinutes": 20,
+    "etaLabel": "Aprox. 20 min",
+    "estimatedReadyAt": "2026-10-24T18:35:00.000Z"
   }
   ```
-  > [!IMPORTANT]
-  > **Privacy Boundary:** The minimal view strictly omits: vehicle owner name, email or ID, bay number/ID, internal user or order IDs, dirt levels (`nivelSuciedad`), AI camera analyses, and photo evidences.
+* `GET /api/me/plates`: Search history for current `CLIENTE` (max 10, ordered by `lastSearchedAt` descending), enriched with live status.
+* `DELETE /api/me/plates/:placa`: Remove specific plate from customer's search history (`204 No Content`).
 
-* **Frontend UI Animation Hint:**
-  The backend supplies canonical phase (`fase`), progress percentage (`porcentajeProgreso`), and human-friendly ETA label (`etaLabel`). The mobile/web frontend is responsible for rendering an animated vehicle icon moving smoothly along the wash line:
-  `PENDIENTE` -> `REMOJO` -> `LAVADO` -> `SECADO` -> `LISTO` (or "Listo para entregar").
+### Evidence (Staff Only)
+* `POST /api/orders/:id/evidence`: Upload photo evidence (`image` multipart file, `etapa`: `REMOJO`, `LAVADO`, `SECADO`, or `LISTO`).
+* `GET /api/orders/:id/evidence`: List all evidence images attached to the order.
 
-* **Dedicated Rate Limiting:**
-  * Protected by a dedicated rate limiter keyed by authenticated user ID.
-  * Configurable via environment variable `PLATE_LOOKUP_RATE_LIMIT_PER_MINUTE` (default: 30 requests/minute).
-  * Exceeding the quota returns unified HTTP `429 RATE_LIMITED`.
+### AI Camera Analysis
+* `POST /api/orders/:id/analyze`: Upload bay surveillance image (`image` field). Runs OCR plate verification and phase classification. If detected plate matches order and detected phase advances forward, automatically advances order phase with audit source `"AI"`.
+* `GET /api/orders/:id/analyses`: Paginated history of AI analysis attempts for the order.
+* `GET /api/ai/status`: Health and configuration status of the AI vision provider.
 
-**Example cURL:**
-```bash
-curl -X GET "http://localhost:3000/api/plates/ABC-123/status" \
-  -H "Authorization: Bearer <TOKEN>"
-```
+### Demo Controls (Staff Only)
+* `POST /api/orders/:id/simulate/advance`: Force immediate advancement to next phase.
+* `POST /api/orders/:id/simulate/reset`: Reset order back to `PENDIENTE` (10%).
+* `POST /api/orders/:id/simulate/complete`: Force order directly to `LISTO` (100%).
+
+### Bays, Packages & System
+* `GET /api/bays`: List washing bays with current occupancy status.
+* `GET /api/bays/summary`: Summary of total, occupied, and free washing bays.
+* `GET /api/packages`: List available wash service packages.
+* `GET /api/health`: Health probe reporting server uptime and timestamp.
+* `GET /api/docs`: Interactive Swagger UI documentation.
+* `GET /api/docs.json`: Raw OpenAPI 3.0.3 specification in JSON format.
 
 ---
 
-### 2. Client Search History ("Saved Plates")
-Like a search box history, every valid plate a `CLIENTE` looks up is automatically remembered for quick future tracking.
+## 7. Wash Phases & Realistic ETA
 
-* **Automatic History Recording:** When a user with role `CLIENTE` looks up a plate on `GET /api/plates/:placa/status`, the plate is automatically saved in `SearchedPlate` with `lastSearchedAt = now` (whether the plate currently has an active order or not). OPERARIO lookups are never stored.
-* **10 Most Recent Limit:** The system retains a maximum of 10 searched plates per user, automatically purging the oldest entries in the same database transaction.
-* **Top-of-History Move:** Re-searching an existing plate updates its timestamp and moves it to the top of the history without creating duplicates.
-* **History Isolation:** Users can only view and manage their own search history.
+### Standard Wash Phases
+The wash cycle follows a deterministic progression:
+1. **`PENDIENTE` (10%):** Order created. Vehicle is waiting in reception. Washing bay is reserved. Order must be marked as ready (`POST /api/orders/:id/ready`) before washing can begin.
+2. **`REMOJO` (30%):** Pre-wash and initial soak.
+3. **`LAVADO` (55%):** Active shampoo and mechanical/manual scrub.
+4. **`SECADO` (80%):** Rinse, blower drying, and microfiber detail.
+5. **`LISTO` (100%):** Wash cycle completed. **Washing bay is automatically freed** for other vehicles. Vehicle waits in the delivery area.
 
-#### List Search History
-* **Endpoint:** `GET /api/me/plates` (Role: `CLIENTE` only; `OPERARIO` -> 403 `FORBIDDEN`)
-* **Response (200 OK):**
-  ```json
-  {
-    "data": [
-      {
-        "placa": "ABC-123",
-        "lastSearchedAt": "2026-10-24T18:30:00.000Z",
-        "status": {
-          "placa": "ABC-123",
-          "marca": "Toyota",
-          "modelo": "Corolla Cross",
-          "color": "Azul",
-          "fase": "LAVADO",
-          "porcentajeProgreso": 60,
-          "listoParaLavar": true,
-          "startedAt": "2026-10-24T18:00:00.000Z",
-          "receivedAt": "2026-10-24T17:50:00.000Z",
-          "etaMinutes": 25,
-          "etaLabel": "Aprox. 25 min",
-          "estimatedReadyAt": "2026-10-24T18:25:00.000Z"
-        }
-      },
-      {
-        "placa": "XYZ-999",
-        "lastSearchedAt": "2026-10-24T18:15:00.000Z",
-        "status": null,
-        "message": "No hay un carro lavándose con esta placa"
-      }
-    ]
+### Realistic ETA Estimation
+Estimated Time of Arrival (ETA) is calculated independently from the demo simulation clock:
+* **Default Phase Durations:**
+  * `PENDIENTE`: 10 min
+  * `REMOJO`: 5 min
+  * `LAVADO`: 15 min
+  * `SECADO`: 10 min
+  * `LISTO`: 0 min
+  * `QUEUE_WAIT_PER_ORDER`: 15 min per earlier unfinished order (capped at 120 min)
+* **Elapsed Deduction:** The calculation deducts elapsed minutes in the current phase (referenced against latest phase transition timestamp).
+* **Guarantees:** Remaining time never drops below 1 minute until `LISTO` (which returns 0 min with label `"Listo para entregar"`).
+* **Formatting:**
+  * Less than 60 min: `"Aprox. 25 min"`
+  * Exact hours: `"Aprox. 1 h"` or `"Aprox. 2 h"`
+  * Hours and minutes: `"Aprox. 1 h 30 min"`
+  * Unready with queue: `"Pendiente, aprox. 1 h 15 min"`
+
+---
+
+## 8. One Active Order & Delivery Business Rules
+
+1. **Active Order Definition:** An order is active if and only if `deliveredAt === null`.
+2. **Single Active Order Concurrency:** A vehicle license plate can have **at most one active order** across the entire database. If an operator attempts to create a new order while an active order exists, the request is rejected with `409 Conflict` (`ACTIVE_ORDER_EXISTS`).
+3. **Delivery Event:**
+   * Delivery is a business milestone, **not** a wash phase. The order stays in `LISTO`.
+   * Only orders in `faseActual = 'LISTO'` can be delivered. Attempting delivery on earlier phases throws `409 NOT_FINISHED`.
+   * Upon delivery, `deliveredAt` is timestamped.
+   * Concurrent delivery requests are handled atomically: exactly one succeeds with `200 OK`, while parallel calls fail with `409 ALREADY_DELIVERED`.
+4. **Post-Delivery Restrictions:** Once delivered, orders are immutable. Any attempt to update phase, trigger demo simulation, or run AI analysis returns `409 ALREADY_DELIVERED`.
+5. **Re-ordering:** Once delivered, a new order for the same vehicle license plate can be created immediately.
+
+---
+
+## 9. Privacy & Evidence Isolation
+
+AutoClean AI enforces strict data privacy rules regarding client-facing information:
+* **Photos Are Operator-Only:** Customers (`CLIENTE`) are **never** permitted to access photographic evidence (`GET /api/orders/:id/evidence` and `POST /api/orders/:id/evidence` return `403 FORBIDDEN`).
+* **Minimal Plate Status View:** `GET /api/plates/:placa/status` exposes only essential vehicle metadata and progress indicators (`placa`, `marca`, `modelo`, `color`, `fase`, `porcentajeProgreso`, `listoParaLavar`, `startedAt`, `receivedAt`, `etaMinutes`, `etaLabel`, `estimatedReadyAt`). It never leaks internal bay IDs, operator notes, or owner identities.
+* **Unguessable Static URLs (Known Architecture Limitation):** Evidence images stored in `storage/evidence/` are served statically at `/evidence/:filename` with Cross-Origin Resource Policy headers (`cross-origin`). Files are given unguessable, cryptographically random names (timestamp + high-entropy suffix). However, anyone with the exact direct URL can fetch the file; strict authenticated token gating for raw binary files is a planned enhancement for future releases.
+
+---
+
+## 10. Centralized Error Codes Table
+
+The backend implements a unified error response contract:
+```json
+{
+  "error": {
+    "code": "ERROR_CODE",
+    "message": "Human-readable description",
+    "details": {}
   }
-  ```
-  *(Note: Computing live statuses on `GET /api/me/plates` does not modify `lastSearchedAt`).*
-
-**Example cURL:**
-```bash
-curl -X GET "http://localhost:3000/api/me/plates" \
-  -H "Authorization: Bearer <CLIENT_TOKEN>"
+}
 ```
 
-#### Delete Plate from Search History
-* **Endpoint:** `DELETE /api/me/plates/:placa` (Role: `CLIENTE` only; `OPERARIO` -> 403 `FORBIDDEN`)
-* **Response:** HTTP `204 No Content` on success; HTTP `404 NOT_FOUND` if the plate is not in the user's search history.
+| HTTP Status | Error Code | Description / Trigger Scenario |
+|:---:|---|---|
+| **400** | `VALIDATION_ERROR` | Request payload, query parameters, or route params failed Zod validation schema. |
+| **400** | `INVALID_ID` | Route parameter ID is not a valid integer. |
+| **400** | `INVALID_PHASE` | Specified phase string is not one of `PENDIENTE`, `REMOJO`, `LAVADO`, `SECADO`, `LISTO`. |
+| **400** | `INVALID_OWNER` | Designated vehicle owner does not possess the `CLIENTE` role. |
+| **400** | `INVALID_FILE_TYPE` | Uploaded file MIME type is not allowed (only JPEG, PNG, WEBP, JFIF permitted). |
+| **400** | `FILE_MISSING` | Required multipart form-data file was not attached in request. |
+| **400** | `FILE_UPLOAD_ERROR` | Multer encountered an unexpected parsing or boundary error. |
+| **400** | `INVALID_JSON` | Malformed JSON in request body. |
+| **400** | `INVALID_REFERENCE` | Prisma foreign key constraint violation (referenced entity does not exist). |
+| **400** | `ORDER_COMPLETED` | Demo control attempted to advance an order already in `LISTO`. |
+| **401** | `UNAUTHORIZED` | Missing, expired, or malformed JWT token in `Authorization` header. |
+| **401** | `INVALID_CREDENTIALS`| Incorrect email or password during login attempt. |
+| **403** | `FORBIDDEN` | Authenticated user role does not have authorization to perform this action. |
+| **404** | `NOT_FOUND` | Requested database record (vehicle, order, package, bay, history item) was not found. |
+| **404** | `OWNER_NOT_FOUND` | User email or ID specified for vehicle ownership does not exist. |
+| **404** | `ROUTE_NOT_FOUND` | Requested HTTP route and method combination does not exist. |
+| **409** | `DUPLICATE_RESOURCE` | Unique constraint violation (e.g. duplicate user email or vehicle plate). |
+| **409** | `ACTIVE_ORDER_EXISTS` | Vehicle license plate already has an unfinished/undelivered active service order. |
+| **409** | `ALREADY_DELIVERED` | Attempted delivery or modification of an order that has already been delivered. |
+| **409** | `NOT_FINISHED` | Attempted delivery of an order that has not yet reached the `LISTO` phase. |
+| **409** | `BAY_OCCUPIED` | Designated washing bay is currently occupied by another active order. |
+| **409** | `ALREADY_READY` | Order has already been marked ready to wash (`listoParaLavar: true`). |
+| **409** | `NOT_READY` | AI camera analysis attempted on an order that is not yet ready to wash. |
+| **409** | `INVALID_STATE` | Order state invalid for requested transition (e.g., mark ready from non-PENDIENTE). |
+| **409** | `WRONG_VEHICLE` | AI analysis detected a license plate differing from the order's registered vehicle. |
+| **413** | `PAYLOAD_TOO_LARGE` | JSON request payload exceeds 100 KB limit. |
+| **413** | `FILE_TOO_LARGE` | Uploaded image exceeds 5 MB limit. |
+| **422** | `PLATE_UNREADABLE` | AI Vision could not detect a legible license plate with sufficient confidence. |
+| **429** | `RATE_LIMITED` | Request quota exceeded for global, evidence, AI, or plate lookup rate limiters. |
+| **500** | `INTERNAL_ERROR` | Unhandled server error. Stack trace suppressed in production. |
+| **503** | `AI_UNAVAILABLE` | Gemini API request failed (timeout or network error) and fallback is disabled. |
+| **503** | `AI_RATE_LIMITED` | Gemini free tier API quota exceeded (HTTP 429) and fallback is disabled. |
 
-**Example cURL:**
-```bash
-curl -X DELETE "http://localhost:3000/api/me/plates/ABC-123" \
-  -H "Authorization: Bearer <CLIENT_TOKEN>"
+---
+
+## 11. AI Vision Integration & Calibration Rules
+
+### Vision Architecture
+AutoClean AI connects surveillance cameras in washing bays to Google Gemini Vision (`gemini-3.1-flash-lite` via `@google/genai`). The system operates in three configurable modes (`AI_MODE`):
+1. **`gemini`:** Real API calls to Google AI Studio. Fails if `GEMINI_API_KEY` is missing.
+2. **`simulated`:** Local deterministic provider for automated testing, development, and offline operation. Reads scenario cues from filenames (e.g. `car-XYZ-123.jpg`, `wrong-plate.jpg`, `unreadable.jpg`).
+3. **`auto`:** Uses Google Gemini if `GEMINI_API_KEY` is present; otherwise falls back gracefully to simulated mode.
+
+### Fallback Behavior
+When `AI_FALLBACK_TO_SIMULATED=true`, any runtime failure from Google Gemini (such as free-tier rate limits `429 Too Many Requests`, socket timeouts, or transient network drops) automatically routes the request to the simulated provider so demo operations and testing remain uninterrupted.
+
+### Context-Aware Phase Calibration
+AutoClean AI **monitors car wash progression; it does NOT audit wash quality**. Surveillance cameras frequently observe wet paint, foam remnants, or water droplets on clean vehicles. The AI decision engine combines visual observations with the order's historical backend state:
+* If current phase is `SECADO` and the AI observes a clean, dry vehicle, it transitions to `LISTO` and frees the washing bay.
+* If current phase is `PENDIENTE`, observing a clean vehicle will **never** skip intermediate wash phases to jump to `LISTO`.
+* Backward regressions (e.g. observing water during `SECADO`) are safely ignored to prevent state oscillation.
+
+> [!NOTE]
+> **Free Tier Privacy Notice:** When utilizing the Google Gemini API free tier, prompt and image inputs may be reviewed by human annotators per Google terms of service. For commercial deployment with customer vehicles, a paid enterprise tier or vertex AI agreement must be utilized.
+
+---
+
+## 12. Automated Test Suites
+
+The backend includes 16 standalone test suites executed via `npm test` (`node tests/runAll.js`):
+
+| # | Test Suite | File | Focus Areas |
+|:---:|---|---|---|
+| 1 | Simulation Engine | `tests/simulation.test.js` | Phase mapping, progress increments, automatic tick advancing |
+| 2 | End-to-End Integration | `tests/integration.test.js` | Full lifecycle creation, phase flow, and bay occupancy |
+| 3 | Demo Controls | `tests/demoControls.test.js` | Force advance, reset, and force complete |
+| 4 | Delivery Prediction | `tests/prediction.test.js` | Estimated completion analytics, bay delay detection |
+| 5 | Request Validation | `tests/validation.test.js` | Zod schema validation across query, body, and params |
+| 6 | Error Handling | `tests/errorHandling.test.js` | Unified error format, status codes, stack trace hiding |
+| 7 | Search & Pagination | `tests/searchFilters.test.js` | Filter by plate, phase, bay; pagination envelopes |
+| 8 | OpenAPI / Swagger | `tests/openapi.test.js` | 100% route coverage parity between Express routes & Swagger |
+| 9 | Basic Security & Config | `tests/security.test.js` | Zod env parsing, Helmet headers, CORS, body size limits |
+| 10 | Authentication & Roles | `tests/auth.test.js` | Registration, login, password hashing, JWT authorization |
+| 11 | Ownership & Privacy | `tests/ownership.test.js` | Client data isolation, vehicle ownership reassignment |
+| 12 | Phases & Ready Flow | `tests/phasesFlow.test.js` | `listoParaLavar` gate, bay release on LISTO, audit events |
+| 13 | AI Vision & Provider | `tests/aiAnalysis.test.js` | Gemini vision, plate OCR, quota fallback, analyses audit |
+| 14 | Context Phase Rules | `tests/phaseRules.test.js` | Context-aware phase rules, regression suppression |
+| 15 | Delivery & Realistic ETA | `tests/delivery.test.js` | Delivery event, race safety, 1 active order per plate, ETA |
+| 16 | Plate Status Lookup | `tests/plateLookup.test.js` | Minimal plate view, customer search history, photo privacy |
+
+---
+
+## 13. Project Structure
+
+```
+Backend/
+├── .github/
+│   └── workflows/
+│       └── ci.yml               # GitHub Actions CI workflow (Node 20, tests)
+├── docs/
+│   └── openapi.yaml             # OpenAPI 3.0.3 specification
+├── prisma/
+│   ├── migrations/              # Versioned database migrations
+│   ├── schema.prisma            # Prisma schema (User, Vehicle, Order, Bay, Event, Evidence, AI)
+│   └── seed.js                  # Initial database seeder (Demo accounts & bays)
+├── src/
+│   ├── config/
+│   │   ├── db.js                # Prisma database client instance
+│   │   ├── env.js               # Zod environment schema & startup validation
+│   │   └── swagger.js           # Swagger UI specification loader
+│   ├── controllers/
+│   │   ├── ai.controller.js            # AI analysis & status endpoints
+│   │   ├── auth.controller.js          # Authentication (login, register, me)
+│   │   ├── bay.controller.js           # Bay occupancy & assignments
+│   │   ├── evidence.controller.js      # Evidence upload & listing (staff only)
+│   │   ├── me.controller.js            # Customer search history endpoints
+│   │   ├── package.controller.js       # Wash package catalog
+│   │   ├── plate.controller.js         # Public plate lookup endpoint
+│   │   ├── serviceOrder.controller.js  # Order lifecycle, delivery, timeline, tracking
+│   │   └── vehicle.controller.js       # Vehicle registration & ownership
+│   ├── middlewares/
+│   │   ├── auth.middleware.js          # JWT authentication & RBAC authorization
+│   │   ├── error.middleware.js         # Centralized error handler & 404 handler
+│   │   ├── rateLimit.middleware.js     # Rate limiters (global, evidence, AI, plate)
+│   │   ├── upload.middleware.js        # Multer disk upload configuration
+│   │   └── validate.middleware.js      # Zod request validation middleware
+│   ├── routes/                         # Express route definitions
+│   ├── services/
+│   │   ├── ai/                         # Gemini provider, simulated provider, calibration
+│   │   ├── eta.service.js              # Realistic ETA computation engine
+│   │   ├── orderPhase.service.js       # Phase transition business logic & audit
+│   │   ├── plateView.service.js        # Shared minimal plate view formatter
+│   │   ├── prediction.service.js       # Predictive delivery analytics
+│   │   └── simulation.service.js       # Background auto-advancement simulation
+│   ├── utils/                          # AppError, asyncHandler, ownership helpers
+│   └── validators/                     # Zod request schemas
+├── storage/
+│   └── evidence/                # Disk directory for stored evidence photos
+├── tests/                       # 16 test suites & test runner
+├── server.js                    # Express application entrypoint
+├── package.json                 # Project dependencies & scripts
+└── .env.example                 # Template for environment configuration
 ```
 
 ---
 
-### 3. Photo Evidence Privacy Rule
-Workshop cameras and photographic evidence are internal to the business and private to shop operators:
-* `GET /api/orders/:orderId/evidence` is restricted strictly to `OPERARIO`.
-* Any `CLIENTE` attempting to access photo evidence receives HTTP `403 FORBIDDEN`, even for vehicles they own.
-* No evidence data or photo URLs are exposed in client-facing tracking or lookup endpoints.
+## 14. Mobile Compatibility Notes
+
+The AutoClean AI backend is built to interface directly with mobile client applications (React Native, Flutter, Swift, Kotlin):
+1. **Strict JSON API:** All API endpoints produce consistent JSON payloads with explicit HTTP status codes.
+2. **ISO 8601 Timestamps:** All dates and timestamps (`createdAt`, `readyAt`, `deliveredAt`, `estimatedReadyAt`, `lastSearchedAt`) are serialized in ISO 8601 UTC format (e.g. `2026-10-24T18:00:00.000Z`).
+3. **Bearer Token Authentication:** Standard `Authorization: Bearer <token>` header is used. Mobile apps should persist this token securely in `Keychain` (iOS) or `EncryptedSharedPreferences` / `Keystore` (Android).
+4. **Standard Pagination Envelope:** Endpoints returning collections (`/api/orders`, `/api/vehicles`, `/api/orders/:id/analyses`) return structured pagination metadata:
+   ```json
+   {
+     "data": [],
+     "pagination": {
+       "page": 1,
+       "limit": 10,
+       "total": 42,
+       "totalPages": 5,
+       "hasNextPage": true,
+       "hasPrevPage": false
+     }
+   }
+   ```
+5. **Unified Error Contract:** Mobile apps should intercept errors using `error.code` for localized UI alerting rather than parsing error message strings.
+6. **AI Analysis Latency:** Processing bay surveillance photos via Google Gemini Vision (`POST /api/orders/:id/analyze`) can require between 10 to 35 seconds depending on network latency and image resolution. Mobile applications should display an indeterminate loading spinner or perform uploads via background tasks.
 
 ---
 
-## Running Tests
+## 15. Known Limitations
 
-Execute the complete test suite (all 16 suites including simulation, integration, demo controls, prediction, validation, error handling, security, auth, ownership, phases, AI analysis, rules, delivery, and plate lookup):
-```bash
-npm test
-```
+1. **Static Evidence Access Control:** Photo evidence files stored in `storage/evidence/` are served statically over HTTP using unguessable random hashes. While customer roles cannot list or query evidence through API endpoints, knowing the exact filename allows direct download. Strict token-protected streaming for static files is recommended for enterprise hardening.
+2. **SQLite Concurrency:** SQLite is ideal for local development, demo environments, and edge server nodes. High-volume concurrent production instances should migrate Prisma datasource to PostgreSQL.
+3. **In-Memory Rate Limiting:** Rate limiters use an in-memory counter store. In a multi-instance cluster deployment, configure Redis store backing for `express-rate-limit`.
