@@ -1,4 +1,5 @@
 const { PrismaClient } = require('@prisma/client');
+const bcrypt = require('bcryptjs');
 
 const prisma = new PrismaClient();
 
@@ -166,6 +167,45 @@ async function main() {
       porcentajeProgreso: 10,
     },
   });
+
+  // 6. Seed demo users (idempotent upsert)
+  const demoPassword = 'Demo12345!';
+  const passwordHash = await bcrypt.hash(demoPassword, 10);
+
+  await prisma.user.upsert({
+    where: { email: 'operario@autoclean.com' },
+    update: {
+      passwordHash,
+      nombre: 'Operario Demo',
+      rol: 'OPERARIO',
+    },
+    create: {
+      email: 'operario@autoclean.com',
+      passwordHash,
+      nombre: 'Operario Demo',
+      rol: 'OPERARIO',
+    },
+  });
+
+  await prisma.user.upsert({
+    where: { email: 'cliente@autoclean.com' },
+    update: {
+      passwordHash,
+      nombre: 'Cliente Demo',
+      rol: 'CLIENTE',
+    },
+    create: {
+      email: 'cliente@autoclean.com',
+      passwordHash,
+      nombre: 'Cliente Demo',
+      rol: 'CLIENTE',
+    },
+  });
+
+  console.log('\n👤 Demo Users seeded successfully:');
+  console.log(`   - Operario: operario@autoclean.com / ${demoPassword} (Role: OPERARIO)`);
+  console.log(`   - Cliente:  cliente@autoclean.com / ${demoPassword} (Role: CLIENTE)`);
+  console.log('   ⚠️  NOTE: Demo credentials are for testing and demonstration ONLY.\n');
 
   console.log('✅ Database seeded successfully!');
 }

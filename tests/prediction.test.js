@@ -6,13 +6,16 @@ process.env.SIMULATION_PHASE_DURATION_MS = '60000';
 
 const { app, server, simulationInterval } = require('../server');
 const prisma = require('../src/config/db');
+const { getOperatorAuthHeaders } = require('./helpers/auth');
 const {
   getRemainingPhasesCount,
   getDeterministicAccuracy,
   calculateDeliveryPrediction,
 } = require('../src/services/prediction.service');
 
-function makeRequest(method, path, body = null) {
+let authHeaders = {};
+
+function makeRequest(method, path, body = null, customHeaders = {}) {
   return new Promise((resolve, reject) => {
     const options = {
       hostname: 'localhost',
@@ -21,6 +24,8 @@ function makeRequest(method, path, body = null) {
       method,
       headers: {
         'Content-Type': 'application/json',
+        ...authHeaders,
+        ...customHeaders,
       },
     };
 
@@ -50,6 +55,8 @@ function makeRequest(method, path, body = null) {
 
 async function runPredictionTests() {
   console.log('🧪 Starting AI Delivery Time Prediction Test Suite...\n');
+
+  authHeaders = await getOperatorAuthHeaders(prisma);
 
   // -------------------------------------------------------------
   // UNIT TESTS: prediction.service.js

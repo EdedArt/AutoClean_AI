@@ -2,9 +2,12 @@ const http = require('http');
 const assert = require('assert');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
+const prisma = require('../src/config/db');
+const { getOperatorAuthHeaders } = require('./helpers/auth');
 
 const TEST_PORT = 3094;
 const BASE_URL = `http://localhost:${TEST_PORT}`;
+let authHeaders = {};
 
 function makeRequest(method, reqPath, body = null, headers = {}) {
   return new Promise((resolve, reject) => {
@@ -15,6 +18,7 @@ function makeRequest(method, reqPath, body = null, headers = {}) {
       path: reqPath,
       method,
       headers: {
+        ...authHeaders,
         ...(!isBuffer && typeof body === 'object' && body !== null ? { 'Content-Type': 'application/json' } : {}),
         ...headers,
       },
@@ -172,6 +176,7 @@ async function runSecurityTests() {
   try {
     console.log('\n2. Starting test server with restrictive CORS and tiny rate limit (max=2)...');
     serverProcess = await startTestServer();
+    authHeaders = await getOperatorAuthHeaders(prisma);
     console.log('  ✅ Test server running on port', TEST_PORT);
 
     // =======================================================================

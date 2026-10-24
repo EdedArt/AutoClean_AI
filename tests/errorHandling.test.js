@@ -9,8 +9,10 @@ const vehicleRoutes = require('../src/routes/vehicle.routes');
 const serviceOrderRoutes = require('../src/routes/serviceOrder.routes');
 const evidenceRoutes = require('../src/routes/evidence.routes');
 const prisma = require('../src/config/db');
+const { getOperatorAuthHeaders } = require('./helpers/auth');
 
 const TEST_PORT = 3095;
+let authHeaders = {};
 
 function createTestApp() {
   const app = express();
@@ -38,6 +40,7 @@ function makeRequest(method, reqPath, body = null, headers = {}) {
       path: reqPath,
       method,
       headers: {
+        ...authHeaders,
         ...(!isBuffer && typeof body === 'object' && body !== null ? { 'Content-Type': 'application/json' } : {}),
         ...headers,
       },
@@ -78,6 +81,7 @@ async function runErrorHandlingTests() {
 
   const app = createTestApp();
   const server = app.listen(TEST_PORT);
+  authHeaders = await getOperatorAuthHeaders(prisma);
 
   let testVehicle;
   let testOrder;

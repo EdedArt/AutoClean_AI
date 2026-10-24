@@ -1,5 +1,113 @@
 # AutoClean AI — Backend
 
+## JWT Authentication with Roles (Phase 19)
+
+The backend implements stateless JWT-based authentication and Role-Based Access Control (RBAC) with two primary user roles:
+* **`OPERARIO`**: Car wash staff responsible for physical workshop operations (registering vehicles, creating orders, updating wash phases, uploading photographic evidence, and inspecting bay utilization).
+* **`CLIENTE`**: Car owners using mobile/web interfaces for read-only tracking and inspection of service progress, predictions, and photographic evidence. (Vehicle ownership assignment will follow in a subsequent phase).
+
+---
+
+### 1. Authentication Architecture & Flow
+
+* **Self-Registration (`POST /api/auth/register`):**
+  * Public endpoint for new users.
+  * Required fields: `nombre`, `email`, `password` (minimum 8 characters).
+  * **Role Restriction:** Public registration **ALWAYS** assigns the role `CLIENTE`. Any `rol` field supplied in the request body is strictly ignored to prevent privilege escalation.
+  * Duplicate email addresses return HTTP `409 Conflict` with unified error code `DUPLICATE_RESOURCE`.
+  * Response returns HTTP `201 Created` with user details (excluding `passwordHash`).
+
+* **Login (`POST /api/auth/login`):**
+  * Required fields: `email`, `password`.
+  * Returns a signed JWT token along with sanitized user info:
+    ```json
+    {
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+      "user": {
+        "id": 1,
+        "nombre": "Operario Demo",
+        "email": "operario@autoclean.com",
+        "rol": "OPERARIO"
+      }
+    }
+    ```
+  * **Anti-User-Enumeration Protection:** Unknown email addresses and incorrect passwords return identical HTTP `401 Unauthorized` responses with code `INVALID_CREDENTIALS` and the message `"Invalid email or password"`.
+
+* **Authenticated Profile (`GET /api/auth/me`):**
+  * Requires valid `Authorization: Bearer <token>` header.
+  * Returns the currently authenticated user's profile (`id`, `nombre`, `email`, `rol`, `createdAt`).
+
+* **Password Security:**
+  * Passwords hashed using `bcryptjs` with salt rounds = 10.
+  * `passwordHash` is never selected, returned in API payloads, or exposed in logs.
+
+* **Rate Limiting Protection:**
+  * Auth endpoints (`/api/auth/register`, `/api/auth/login`) are protected by a strict dedicated rate limiter (`RATE_LIMIT_AUTH_MAX`, default 10 requests per minute per IP) to mitigate brute-force and credential stuffing attacks.
+
+---
+
+### 2. Roles & Permissions Matrix
+
+| Endpoint | Method | Public | `CLIENTE` | `OPERARIO` | Notes |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| `/api/health` | `GET` | ✅ | ✅ | ✅ | System health probe |
+| `/api/docs*` | `GET` | ✅ | ✅ | ✅ | Interactive Swagger UI & OpenAPI spec |
+| `/evidence/*` | `GET` | ✅ | ✅ | ✅ | Static evidence photo asset delivery |
+| `/api/auth/register` | `POST` | ✅ | ✅ | ✅ | Self-registration (always creates `CLIENTE`) |
+| `/api/auth/login` | `POST` | ✅ | ✅ | ✅ | Issues signed JWT token |
+| `/api/auth/me` | `GET` | ❌ | ✅ | ✅ | Returns current user profile |
+| `/api/vehicles` | `GET` | ❌ | ✅ | ✅ | List & search vehicles (paginated) |
+| `/api/vehicles/:id` | `GET` | ❌ | ✅ | ✅ | Retrieve vehicle details |
+| `/api/vehicles` | `POST` | ❌ | ❌ (403) | ✅ | Register new workshop vehicle |
+| `/api/orders` | `GET` | ❌ | ✅ | ✅ | List & filter orders (paginated) |
+| `/api/orders/:id` | `GET` | ❌ | ✅ | ✅ | Order details with bay & package info |
+| `/api/orders` | `POST` | ❌ | ❌ (403) | ✅ | Create new service order |
+| `/api/orders/:id/phase` | `PATCH` | ❌ | ❌ (403) | ✅ | Manual phase transition |
+| `/api/orders/:id/simulate/*` | `POST` | ❌ | ❌ (403) | ✅ | Demo simulation controls (advance/pause/resume) |
+| `/api/orders/:orderId/evidence` | `POST` | ❌ | ❌ (403) | ✅ | Upload photographic evidence |
+| `/api/orders/:orderId/evidence` | `GET` | ❌ | ✅ | ✅ | List photo evidence for order |
+| `/api/orders/track/:placa` | `GET` | ❌ | ✅ | ✅ | Read-only order tracking with AI prediction |
+| `/api/orders/:id/prediction` | `GET` | ❌ | ✅ | ✅ | AI completion time prediction |
+| `/api/bays` | `GET` | ❌ | ✅ | ✅ | List washing bays |
+| `/api/bays/summary` | `GET` | ❌ | ❌ (403) | ✅ | Real-time bay occupancy metrics badge |
+| `/api/packages` | `GET` | ❌ | ✅ | ✅ | List service packages |
+
+---
+
+### 3. Demo Credentials
+
+The database seed (`npm run prisma:seed` or `npx prisma db seed`) populates two demo accounts for testing:
+
+| Role | Email | Password | Access Level |
+| :--- | :--- | :--- | :--- |
+| **`OPERARIO`** | `operario@autoclean.com` | `Demo12345!` | Full operational privileges (create orders, advance phases, upload evidence, view bay summary) |
+| **`CLIENTE`** | `cliente@autoclean.com` | `Demo12345!` | Read-only tracking privileges (tracking by plate, orders list, predictions, evidence) |
+
+> [!IMPORTANT]
+> **DEMO ONLY:** These accounts and passwords are provided strictly for local development and demonstration. They must never be deployed or used in production environments.
+
+---
+
+### 4. Interactive Testing with Swagger UI ("Authorize" Button)
+
+The OpenAPI 3.0 documentation supports interactive JWT testing directly in your browser:
+
+1. Open [http://localhost:3000/api/docs](http://localhost:3000/api/docs) in your browser.
+2. In the **Authentication** section, expand `POST /api/auth/login` and click **Try it out**.
+3. In the request body, enter the demo credentials for an operario or cliente:
+   ```json
+   {
+     "email": "operario@autoclean.com",
+     "password": "Demo12345!"
+   }
+   ```
+4. Click **Execute**. In the response body, copy the string value inside the `"token"` field.
+5. Scroll to the top of the page and click the green **Authorize** 🔓 button.
+6. In the modal, paste the copied token into the **Value** field and click **Authorize**, then click **Close**. The lock icon will change to locked (🔒).
+7. Now all protected requests (e.g., `POST /api/orders`, `GET /api/bays/summary`, or `GET /api/auth/me`) will automatically transmit the `Authorization: Bearer <token>` header when you execute them!
+
+---
+
 ## Security & Configuration (Phase 18)
 
 The backend incorporates production-grade HTTP security, Zod-based environment validation, CORS policies optimized for mobile clients, granular rate limiting, and request payload size defenses.
@@ -18,6 +126,9 @@ Environment variables are validated on startup via Zod in `src/config/env.js`. I
 | `RATE_LIMIT_WINDOW_MS` | number | `60000` | Time window for rate limiting in ms |
 | `RATE_LIMIT_MAX` | number | `100` | Max requests per IP in window for `/api` routes |
 | `RATE_LIMIT_EVIDENCE_MAX` | number | `20` | Max requests per IP in window for evidence upload |
+| `RATE_LIMIT_AUTH_MAX` | number | `10` | Max requests per IP in window for auth routes |
+| `JWT_SECRET` | string | *Required (min 32 chars)* | Secret key used to sign and verify JWT tokens |
+| `JWT_EXPIRES_IN` | string | `1d` | Expiration time for generated JWT tokens (e.g. `1d`, `12h`) |
 
 ---
 

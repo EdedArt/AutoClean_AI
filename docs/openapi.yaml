@@ -11,6 +11,8 @@ info:
 servers:
   - url: http://localhost:3000
     description: Local development server
+security:
+  - bearerAuth: []
 tags:
   - name: Health
     description: Service health and readiness status
@@ -28,13 +30,107 @@ tags:
     description: Deterministic AI delivery time estimation with delay detection
   - name: Evidence
     description: Photographic evidence management and upload per order phase
+  - name: Auth
+    description: User registration, login, and identity verification with JWT
 paths:
+  /api/auth/register:
+    post:
+      tags:
+        - Auth
+      summary: Register a new client account
+      description: Public self-registration for car owners. Always assigns role CLIENTE.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+            examples:
+              StandardClient:
+                summary: New client account registration
+                value:
+                  nombre: Carlos Gomez
+                  email: carlos@example.com
+                  password: Password123!
+      responses:
+        '201':
+          description: Client account created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/auth/login:
+    post:
+      tags:
+        - Auth
+      summary: Authenticate user credentials
+      description: Verifies email and password and returns a signed JWT Bearer token along with user profile.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            examples:
+              OperatorLogin:
+                summary: Operator login credentials
+                value:
+                  email: operario@autoclean.com
+                  password: Demo12345!
+      responses:
+        '200':
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/auth/me:
+    get:
+      tags:
+        - Auth
+      summary: Get current authenticated user profile
+      description: Returns the authenticated user's profile and assigned role based on the Bearer token.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Authenticated user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
   /api/health:
     get:
       tags:
         - Health
       summary: Service health check
       description: Returns operational status and current server timestamp.
+      security: []
       responses:
         '200':
           description: Service is healthy and operational
@@ -579,7 +675,94 @@ paths:
 
 
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Provide the JWT Bearer token obtained from POST /api/auth/login
+
   schemas:
+    UserRole:
+      type: string
+      enum:
+        - OPERARIO
+        - CLIENTE
+      example: OPERARIO
+
+    UserProfile:
+      type: object
+      required:
+        - id
+        - email
+        - nombre
+        - rol
+        - createdAt
+      properties:
+        id:
+          type: integer
+          example: 1
+        email:
+          type: string
+          format: email
+          example: operario@autoclean.com
+        nombre:
+          type: string
+          example: Operario Demo
+        rol:
+          $ref: '#/components/schemas/UserRole'
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-10-23T18:00:00.000Z'
+
+    RegisterRequest:
+      type: object
+      required:
+        - nombre
+        - email
+        - password
+      properties:
+        nombre:
+          type: string
+          example: Carlos Gomez
+        email:
+          type: string
+          format: email
+          example: carlos@example.com
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: Password123!
+
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          example: operario@autoclean.com
+        password:
+          type: string
+          format: password
+          example: Demo12345!
+
+    LoginResponse:
+      type: object
+      required:
+        - token
+        - user
+      properties:
+        token:
+          type: string
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        user:
+          $ref: '#/components/schemas/UserProfile'
+
     Phase:
       type: string
       enum:
@@ -1067,6 +1250,40 @@ components:
                 error:
                   code: RATE_LIMITED
                   message: Too many requests, please try again later.
+
+    Unauthorized:
+      description: Missing, invalid, or expired authentication token (401)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            Unauthorized:
+              summary: Missing or invalid token
+              value:
+                error:
+                  code: UNAUTHORIZED
+                  message: Authorization token is missing or malformed
+            InvalidCredentials:
+              summary: Invalid login credentials
+              value:
+                error:
+                  code: INVALID_CREDENTIALS
+                  message: Invalid email or password
+
+    Forbidden:
+      description: Access forbidden for user role (403)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            Forbidden:
+              summary: Role unauthorized
+              value:
+                error:
+                  code: FORBIDDEN
+                  message: Role "CLIENTE" is not authorized to access this resource
 
 
 

@@ -6,6 +6,7 @@ console.log('Running AutoClean AI Backend Tests');
 console.log('====================================\n');
 
 process.env.NODE_ENV = 'test';
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret-at-least-32-chars-long-for-testing';
 
 const tests = [
   path.join(__dirname, 'simulation.test.js'),
@@ -17,6 +18,7 @@ const tests = [
   path.join(__dirname, 'searchFilters.test.js'),
   path.join(__dirname, 'openapi.test.js'),
   path.join(__dirname, 'security.test.js'),
+  path.join(__dirname, 'auth.test.js'),
 ];
 
 for (const testFile of tests) {
