@@ -192,7 +192,7 @@ async function analyzeImage({ buffer, mimeType = 'image/jpeg', expectedPlate }) 
 
   const client = getClient();
   const modelName = env.GEMINI_MODEL || 'gemini-3.1-flash-lite';
-  const timeoutMs = env.GEMINI_TIMEOUT_MS || 20000;
+  const timeoutMs = Math.max(env.GEMINI_TIMEOUT_MS || 20000, 35000);
 
   const base64Data = buffer.toString('base64');
   const promptText = expectedPlate
