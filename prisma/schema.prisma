@@ -98,11 +98,23 @@ model Evidence {
 }
 
 model User {
-  id           Int       @id @default(autoincrement())
-  email        String    @unique
-  passwordHash String
-  nombre       String
-  rol          String    // "OPERARIO" | "CLIENTE"
-  createdAt    DateTime  @default(now())
-  vehicles     Vehicle[] @relation("UserVehicles")
+  id             Int             @id @default(autoincrement())
+  email          String          @unique
+  passwordHash   String
+  nombre         String
+  rol            String          // "OPERARIO" | "CLIENTE"
+  createdAt      DateTime        @default(now())
+  vehicles       Vehicle[]       @relation("UserVehicles")
+  searchedPlates SearchedPlate[]
+}
+
+model SearchedPlate {
+  id             Int      @id @default(autoincrement())
+  userId         Int
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  placa          String
+  lastSearchedAt DateTime @default(now())
+
+  @@unique([userId, placa])
+  @@index([userId, lastSearchedAt])
 }
