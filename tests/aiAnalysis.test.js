@@ -191,6 +191,10 @@ async function runAiAnalysisTests() {
     assert.strictEqual(resMatch.body.phase.previous, 'PENDIENTE');
     assert.strictEqual(resMatch.body.phase.current, 'REMOJO');
     assert.strictEqual(resMatch.body.order.faseActual, 'REMOJO');
+    assert.ok(resMatch.body.observations, 'Response must include observations object');
+    assert.strictEqual(typeof resMatch.body.observations.waterOnCar, 'boolean');
+    assert.strictEqual(resMatch.body.phaseSource, 'rules');
+    assert.ok(resMatch.body.phaseReason);
     assert.ok(resMatch.body.evidenceId, 'Evidence should be created on matching plate');
 
     const aiEvent = await prisma.phaseEvent.findFirst({
@@ -510,6 +514,49 @@ async function runAiAnalysisTests() {
     }
     assert.strictEqual(fastFailCaught, true, 'Startup validation must throw when AI_MODE=gemini and key is missing');
     console.log('  ✅ Startup validation correctly fails fast without printing secrets.');
+
+    // 17. Clean dry glossy car resolving to LISTO via rules even if model guessed PENDIENTE
+    console.log('\n17. Testing clean dry glossy car resolves to LISTO via rules even when model guessed PENDIENTE...');
+    const { order: orderGlossyFix } = await createTestVehicleAndOrder({ placa: 'GLS-777', listo: true, currentPhase: 'SECADO' });
+    aiService.setProvider({
+      name: 'gemini',
+      async analyzeImage() {
+        return {
+          plateDetected: 'GLS-777',
+          plateConfidence: 0.95,
+          observations: {
+            soapFoamVisible: false,
+            waterOnCar: false,
+            dryingInProgress: false,
+            visibleDirt: 'none',
+            cleanAndGlossy: true,
+            observationNotes: 'Car is dry and glistening clean',
+          },
+          phase: 'PENDIENTE', // Model erroneously guessed PENDIENTE
+          phaseConfidence: 0.96,
+          dirtLevel: null,
+          notes: 'Model raw guess was PENDIENTE',
+        };
+      },
+    });
+
+    const mpGlossyFix = buildMultipart();
+    const resListoRule = await makeRequest('POST', `/api/orders/${orderGlossyFix.id}/analyze`, mpGlossyFix.buffer, {
+      ...operatorHeaders,
+      ...mpGlossyFix.headers,
+    });
+
+    // Reset provider back to simulated
+    aiService.setProvider(null);
+
+    assert.strictEqual(resListoRule.status, 200);
+    assert.strictEqual(resListoRule.body.phase.detected, 'LISTO', 'Rules must correct model guess from PENDIENTE to LISTO');
+    assert.strictEqual(resListoRule.body.phaseSource, 'rules');
+    assert.strictEqual(resListoRule.body.phase.current, 'LISTO');
+    assert.strictEqual(resListoRule.body.phase.changed, true);
+    assert.ok(resListoRule.body.observations);
+    assert.strictEqual(resListoRule.body.observations.cleanAndGlossy, true);
+    console.log('  ✅ Rules correctly override model PENDIENTE misclassification to LISTO for clean dry glossy car.');
 
     console.log('\n🎉 All Phase 22 Gemini Vision & AI Analysis tests passed successfully!');
   } finally {

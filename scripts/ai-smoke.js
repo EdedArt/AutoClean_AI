@@ -26,15 +26,21 @@ async function runSmoke() {
       resolvedPath = basePath + matchedExt;
       console.log(`ℹ️  Note: Resolved ${path.basename(photoPath)} -> ${path.basename(resolvedPath)}`);
     } else {
-      console.error(`Error: Photo file not found at: ${resolvedPath}`);
       const parentDir = path.dirname(resolvedPath);
-      if (fs.existsSync(parentDir)) {
-        const found = fs.readdirSync(parentDir).filter((f) => /\.(jpe?g|png|webp|jfif)$/i.test(f));
-        if (found.length > 0) {
-          console.error(`Available images in folder: ${found.join(', ')}`);
+      const baseNameWithoutExt = path.basename(resolvedPath, ext).toLowerCase();
+      if (baseNameWithoutExt === 'listo' && fs.existsSync(path.join(parentDir, 'terminado.jfif'))) {
+        resolvedPath = path.join(parentDir, 'terminado.jfif');
+        console.log(`ℹ️  Note: Resolved ${path.basename(photoPath)} -> terminado.jfif`);
+      } else {
+        console.error(`Error: Photo file not found at: ${resolvedPath}`);
+        if (fs.existsSync(parentDir)) {
+          const found = fs.readdirSync(parentDir).filter((f) => /\.(jpe?g|png|webp|jfif)$/i.test(f));
+          if (found.length > 0) {
+            console.error(`Available images in folder: ${found.join(', ')}`);
+          }
         }
+        process.exit(1);
       }
-      process.exit(1);
     }
   }
 
@@ -61,6 +67,9 @@ async function runSmoke() {
     console.log(`Model:         ${analysis.model}`);
     console.log(`Fallback used: ${analysis.fallbackUsed}`);
     console.log(`Latency:       ${analysis.latencyMs} ms`);
+    console.log(`Phase:         ${analysis.result.phase} (${analysis.result.phaseConfidence}) [via ${analysis.result.phaseSource}]`);
+    console.log(`Phase Reason:  ${analysis.result.phaseReason}`);
+    console.log(`Observations:  ${JSON.stringify(analysis.result.observations)}`);
     console.log('Structured Output:');
     console.log(JSON.stringify(analysis.result, null, 2));
     console.log('---------------------------------\n');

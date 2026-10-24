@@ -104,6 +104,34 @@ npm run ai:smoke -- path/to/vehicle.jpg
 
 ---
 
+### 5. Observation-Based Phase Classification & Decision Rules (Phase 22b)
+
+To eliminate classification ambiguity between dry phases (`PENDIENTE` vs. `LISTO`), the vision pipeline enforces a two-tier hybrid decision system:
+1. **Multimodal Extraction (`geminiProvider.js`):** The model is instructed to first extract factual, physical visual `observations` before proposing a phase:
+   * `soapFoamVisible` (boolean): Whether white soap foam, shampoo suds, or active lather is visible on the vehicle surface.
+   * `waterOnCar` (boolean): Whether the vehicle body is visibly wet, dripping, or being sprayed with water.
+   * `dryingInProgress` (boolean): Whether personnel are actively wiping with microfiber towels/chamois, using air blowers, or if the car is in a drying stall without foam.
+   * `visibleDirt` (`"none"` \| `"light"` \| `"heavy"`): True assessment of dust, road grime, mud, or stains.
+   * `cleanAndGlossy` (boolean): Whether the paint looks uniform, clean, shiny, polished, and free of dirt.
+   * `observationNotes` (string): Concise summary of visible physical facts.
+
+2. **Deterministic Rules Engine (`src/services/ai/phaseRules.js`):** Our backend evaluates the extracted physical observations through a deterministic decision table in strict priority order:
+
+| Order | Physical Condition | Resulting Phase | Source | Explanation |
+| :---: | :--- | :---: | :---: | :--- |
+| **1** | `soapFoamVisible === true` | `LAVADO` | `rules` | Foam takes absolute precedence over all other signals |
+| **2** | `waterOnCar && dryingInProgress` | `SECADO` | `rules` | Wet vehicle actively undergoing manual/air drying |
+| **3** | `waterOnCar && !dryingInProgress` | `REMOJO` | `rules` | Wet vehicle without foam or drying (pre-rinse/rinse stage) |
+| **4** | `!waterOnCar && visibleDirt === "none" && cleanAndGlossy` | `LISTO` | `rules` | Dry, spotless, shiny car resolves to `LISTO` even if the model guessed `PENDIENTE` |
+| **5** | `!waterOnCar && visibleDirt in ["light", "heavy"] && !cleanAndGlossy` | `PENDIENTE` | `rules` | Dry car with visible grime awaiting initial wash cycle |
+| **6** | *Any contradictory or ambiguous combination* | *Model's Guess* | `model` | Falls back to model's phase guess with confidence capped at `0.70` |
+
+#### Confidence Scoring & Auditability:
+* **Rule-Derived Confidence:** For rule-resolved phases, confidence is calculated as `Math.min(modelConfidence, 0.95)` to preserve honest probabilistic evaluation while bounding deterministic rule matches.
+* **Audit Trail:** Responses from `POST /api/orders/:id/analyze` expose `observations`, `phaseSource` (`"rules"` \| `"model"`), and `phaseReason` directly in the payload and appended to order notes, enabling complete operational transparency.
+
+---
+
 ## New Wash Phases, Ready-to-Wash Flow and Bay Lifecycle (Phase 21)
 
 Phase 21 establishes a 5-phase wash workflow, introduces an explicit operator "Ready to Wash" trigger, records an immutable chronological phase audit trail (`PhaseEvent`), enforces automated washing bay lifecycle management, and adds configurable simulation controls.
