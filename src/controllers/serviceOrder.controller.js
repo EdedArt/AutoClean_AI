@@ -6,6 +6,7 @@ const { changePhase } = require('../services/orderPhase.service');
 const { calculateDeliveryPrediction } = require('../services/prediction.service');
 const { getPrismaPagination, buildPaginatedResponse } = require('../utils/pagination');
 const { getOrderOwnershipFilter, checkOrderAccess } = require('../utils/ownership');
+const { enrichOrderWithEta } = require('../services/eta.service');
 
 /**
  * Fetch all service orders with nested vehicle, package, and bay data
@@ -79,7 +80,12 @@ const getServiceOrders = asyncHandler(async (req, res) => {
     prisma.serviceOrder.count({ where }),
   ]);
 
-  res.status(200).json(buildPaginatedResponse(orders, total, page, limit));
+  const now = new Date();
+  const enrichedOrders = await Promise.all(
+    orders.map((order) => enrichOrderWithEta(order, { now }))
+  );
+
+  res.status(200).json(buildPaginatedResponse(enrichedOrders, total, page, limit));
 });
 
 /**
@@ -239,9 +245,10 @@ const trackOrderByPlaca = asyncHandler(async (req, res) => {
   checkOrderAccess(order, req.user, 'No hay un carro lavándose con esta placa');
 
   const prediction = calculateDeliveryPrediction(order);
+  const enrichedOrder = await enrichOrderWithEta(order);
 
   res.status(200).json({
-    ...order,
+    ...enrichedOrder,
     prediction,
   });
 });
