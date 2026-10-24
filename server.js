@@ -1,5 +1,6 @@
 require('dotenv').config();
 const path = require('path');
+const fs = require('fs');
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
@@ -77,10 +78,15 @@ app.use(express.json({ limit: '100kb' }));
 app.use(morgan('dev'));
 
 // Static files for photo evidence (CORP set to cross-origin for external frontend consumption)
+const evidenceStorageDir = path.join(__dirname, 'storage/evidence');
+if (!fs.existsSync(evidenceStorageDir)) {
+  fs.mkdirSync(evidenceStorageDir, { recursive: true });
+}
+
 app.use(
   '/evidence',
   helmet.crossOriginResourcePolicy({ policy: 'cross-origin' }),
-  express.static(path.join(__dirname, 'storage/evidence'))
+  express.static(evidenceStorageDir)
 );
 
 // Swagger API Documentation
