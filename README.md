@@ -1,10 +1,92 @@
 # AutoClean AI — Backend
 
+## Vehicle Ownership, Color and Per-Client Visibility (Phase 20)
+
+Phase 20 introduces client ownership attribution, vehicle visual attributes (`color`), contact owner metadata (`ownerName`), and strict per-client visibility rules for personal vehicle tracking.
+
+---
+
+### 1. New Vehicle Fields
+
+When an operator registers a vehicle or updates its owner, the following attributes are supported:
+
+| Field | Type | Required | Description |
+| :--- | :--- | :---: | :--- |
+| `placa` | string | ✅ | Canonical plate in format `XXX-123` (normalized to uppercase) |
+| `marca` | string | ✅ | Vehicle manufacturer (e.g. `Mazda`, `Toyota`) |
+| `modelo` | string | ✅ | Vehicle model (e.g. `CX-50`, `Corolla`) |
+| `color` | string | ✅ | Visual color (1 to 30 characters, e.g. `Rojo`, `Blanco`) |
+| `ownerName` | string | ✅ | Full name of owner (2 to 80 characters, e.g. `Edgar Arteaga`) |
+| `ownerEmail` | string (email) | Optional | Email of registered `CLIENTE` account to associate vehicle ownership |
+| `ownerId` | integer (FK) | Automatic | Linked `User.id` when `ownerEmail` is provided or updated |
+| `nivelSuciedad` | string (enum) | Optional | `Leve` \| `Moderado` \| `Severo` (assessed by AI in a future phase) |
+
+---
+
+### 2. Ownership & Client Visibility Rules
+
+The API enforces strict data isolation based on authenticated JWT user roles:
+
+* **`OPERARIO` (Workshop Staff):**
+  * Retains complete administrative and operational visibility across the entire workshop.
+  * Can register vehicles, link owners, create orders, advance phases, view all vehicle catalogs, and inspect workshop-wide metrics.
+
+* **`CLIENTE` (Vehicle Owner):**
+  * **Catalog List (`GET /api/vehicles`):** Automatically filtered. Clients only see vehicles where `vehicle.ownerId === req.user.id`. Search (`?search=...`) and pagination operate exclusively within the client's own vehicles.
+  * **Vehicle Detail (`GET /api/vehicles/:id`):** Requesting a vehicle owned by another user or without an owner returns HTTP `404 Not Found` (avoids disclosing whether the vehicle exists).
+  * **Orders List (`GET /api/orders`):** Automatically filtered to orders for vehicles owned by the client.
+  * **Plate Tracking (`GET /api/orders/track/:placa`):** Clients can only track license plates of vehicles they own. Tracking any unowned plate returns the identical HTTP `404 Not Found` response as a non-existent plate.
+  * **Predictions & Photographic Evidence (`GET /api/orders/:id/prediction`, `GET /api/orders/:orderId/evidence`):** Restricted to the owner. Returns HTTP `404 Not Found` if requested by another client.
+  * **Bays & Packages (`GET /api/bays`, `GET /api/packages`):** Freely accessible to all authenticated roles.
+
+---
+
+### 3. Operator Workflow Example
+
+1. **Register a Vehicle with Owner Account:**
+   ```bash
+   curl -X POST "http://localhost:3000/api/vehicles" \
+     -H "Authorization: Bearer <OPERATOR_JWT>" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "placa": "XYZ-123",
+       "marca": "Mazda",
+       "modelo": "CX-50",
+       "color": "Rojo",
+       "ownerName": "Edgar Arteaga",
+       "ownerEmail": "cliente@autoclean.com"
+     }'
+   ```
+   *If `ownerEmail` is not found, returns `404 OWNER_NOT_FOUND`. If the user is an `OPERARIO`, returns `400 INVALID_OWNER`.*
+
+2. **Link or Transfer Owner Account Later:**
+   ```bash
+   curl -X PATCH "http://localhost:3000/api/vehicles/1/owner" \
+     -H "Authorization: Bearer <OPERATOR_JWT>" \
+     -H "Content-Type: application/json" \
+     -d '{ "ownerEmail": "cliente@autoclean.com" }'
+   ```
+
+3. **Owner Client Views Own Vehicles:**
+   ```bash
+   curl -X GET "http://localhost:3000/api/vehicles" \
+     -H "Authorization: Bearer <CLIENT_JWT>"
+   ```
+
+---
+
+### 4. Known Limitations & Security Roadmap
+
+> [!NOTE]
+> **Static Evidence Access:** Photo evidence files stored on disk and served statically at `/evidence/*` are publicly accessible by their direct URL using high-entropy random filenames. In an upcoming phase, static file serving will be migrated to authenticated streams or signed temporary URLs.
+
+---
+
 ## JWT Authentication with Roles (Phase 19)
 
 The backend implements stateless JWT-based authentication and Role-Based Access Control (RBAC) with two primary user roles:
 * **`OPERARIO`**: Car wash staff responsible for physical workshop operations (registering vehicles, creating orders, updating wash phases, uploading photographic evidence, and inspecting bay utilization).
-* **`CLIENTE`**: Car owners using mobile/web interfaces for read-only tracking and inspection of service progress, predictions, and photographic evidence. (Vehicle ownership assignment will follow in a subsequent phase).
+* **`CLIENTE`**: Car owners using mobile/web interfaces for read-only tracking and inspection of service progress, predictions, and photographic evidence.
 
 ---
 
@@ -56,11 +138,12 @@ The backend implements stateless JWT-based authentication and Role-Based Access 
 | `/api/auth/register` | `POST` | ✅ | ✅ | ✅ | Self-registration (always creates `CLIENTE`) |
 | `/api/auth/login` | `POST` | ✅ | ✅ | ✅ | Issues signed JWT token |
 | `/api/auth/me` | `GET` | ❌ | ✅ | ✅ | Returns current user profile |
-| `/api/vehicles` | `GET` | ❌ | ✅ | ✅ | List & search vehicles (paginated) |
-| `/api/vehicles/:id` | `GET` | ❌ | ✅ | ✅ | Retrieve vehicle details |
+| `/api/vehicles` | `GET` | ❌ | ✅ (Own) | ✅ (All) | List & search vehicles (paginated) |
+| `/api/vehicles/:id` | `GET` | ❌ | ✅ (Own) | ✅ (All) | Retrieve vehicle details |
 | `/api/vehicles` | `POST` | ❌ | ❌ (403) | ✅ | Register new workshop vehicle |
-| `/api/orders` | `GET` | ❌ | ✅ | ✅ | List & filter orders (paginated) |
-| `/api/orders/:id` | `GET` | ❌ | ✅ | ✅ | Order details with bay & package info |
+| `/api/vehicles/:id/owner` | `PATCH` | ❌ | ❌ (403) | ✅ | Link or update vehicle owner by client email |
+| `/api/orders` | `GET` | ❌ | ✅ (Own) | ✅ (All) | List & filter orders (paginated) |
+| `/api/orders/:id` | `GET` | ❌ | ✅ (Own) | ✅ (All) | Order details with bay & package info |
 | `/api/orders` | `POST` | ❌ | ❌ (403) | ✅ | Create new service order |
 | `/api/orders/:id/phase` | `PATCH` | ❌ | ❌ (403) | ✅ | Manual phase transition |
 | `/api/orders/:id/simulate/*` | `POST` | ❌ | ❌ (403) | ✅ | Demo simulation controls (advance/pause/resume) |
