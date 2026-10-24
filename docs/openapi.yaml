@@ -32,6 +32,8 @@ tags:
     description: Photographic evidence management and upload per order phase
   - name: Auth
     description: User registration, login, and identity verification with JWT
+  - name: AI
+    description: Gemini AI camera vision analysis and status
 paths:
   /api/auth/register:
     post:
@@ -821,8 +823,161 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /api/ai/status:
+    get:
+      tags:
+        - AI
+      summary: Retrieve AI vision system runtime status
+      description: >-
+        Returns the active AI mode, effective provider, model name, whether an API key is configured (boolean only), fallback status, and minimum confidence threshold. Role visibility: OPERARIO only.
+      responses:
+        '200':
+          description: AI system status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
+  /api/orders/{id}/analyze:
+    post:
+      tags:
+        - AI
+      summary: Analyze camera frame image to verify plate and classify wash phase
+      description: >-
+        Analyzes a camera frame photo of a vehicle in the wash bay. Detects license plate, verifies it matches the order's vehicle, and classifies the wash phase. If plate matches, automatically advances the order phase. Role visibility: OPERARIO only.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Service order ID
+          schema:
+            type: integer
+            example: 1
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - image
+              properties:
+                image:
+                  type: string
+                  format: binary
+                  description: Vehicle photo frame (JPEG, PNG, WEBP, max 5 MB)
+                scenario:
+                  type: string
+                  enum: [wrong_vehicle, unreadable, regression, low_confidence]
+                  description: Optional demo scenario (honored only by simulated provider)
+                saveEvidence:
+                  type: boolean
+                  default: true
+                  description: Whether to save the analyzed frame as photo evidence if plate matches
+      responses:
+        '200':
+          description: Analysis completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiAnalysisResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          description: PLATE_UNREADABLE error when plate cannot be deciphered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                PlateUnreadable:
+                  summary: Plate unreadable or low confidence
+                  value:
+                    error:
+                      code: PLATE_UNREADABLE
+                      message: Unable to read license plate with sufficient confidence
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          description: AI service unavailable or rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                AiUnavailable:
+                  summary: AI vision unavailable
+                  value:
+                    error:
+                      code: AI_UNAVAILABLE
+                      message: AI vision service is temporarily unavailable
+                AiRateLimited:
+                  summary: AI rate limit exceeded
+                  value:
+                    error:
+                      code: AI_RATE_LIMITED
+                      message: "AI service rate limit exceeded. Please retry in 60 seconds (Retry-After: 60)."
 
+  /api/orders/{id}/analyses:
+    get:
+      tags:
+        - AI
+      summary: Retrieve paginated AI analysis history for a service order
+      description: >-
+        Returns the history of AI camera frame analysis events for a service order in descending chronological order. Role visibility: OPERARIO only.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Service order ID
+          schema:
+            type: integer
+            example: 1
+        - name: page
+          in: query
+          required: false
+          description: Page number (1-based)
+          schema:
+            type: integer
+            default: 1
+            example: 1
+        - name: limit
+          in: query
+          required: false
+          description: Items per page (max 50)
+          schema:
+            type: integer
+            default: 10
+            example: 10
+      responses:
+        '200':
+          description: Paginated AI analysis history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiAnalysesListResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
 components:
   securitySchemes:
@@ -1374,6 +1529,174 @@ components:
           example: 2
           description: Number of bays currently available
 
+    AiStatus:
+      type: object
+      required:
+        - mode
+        - effectiveProvider
+        - model
+        - keyConfigured
+        - fallbackEnabled
+        - minConfidence
+      properties:
+        mode:
+          type: string
+          enum: [auto, gemini, simulated]
+          example: auto
+        effectiveProvider:
+          type: string
+          enum: [gemini, simulated]
+          example: simulated
+        model:
+          type: string
+          example: gemini-3.1-flash-lite
+        keyConfigured:
+          type: boolean
+          example: false
+          description: Whether GEMINI_API_KEY is configured in server environment
+        fallbackEnabled:
+          type: boolean
+          example: true
+        minConfidence:
+          type: number
+          example: 0.6
+
+    AiAnalysis:
+      type: object
+      required:
+        - id
+        - orderId
+        - provider
+        - model
+        - plateMatched
+        - outcome
+        - fallbackUsed
+        - latencyMs
+        - createdAt
+      properties:
+        id:
+          type: integer
+          example: 1
+        orderId:
+          type: integer
+          example: 1
+        provider:
+          type: string
+          example: gemini
+        model:
+          type: string
+          example: gemini-3.1-flash-lite
+        plateDetected:
+          type: string
+          nullable: true
+          example: XYZ-123
+        plateMatched:
+          type: boolean
+          example: true
+        phaseDetected:
+          type: string
+          nullable: true
+          example: LAVADO
+        confidence:
+          type: number
+          nullable: true
+          example: 0.94
+        outcome:
+          type: string
+          enum: [APPLIED, UNCHANGED, REGRESSION_IGNORED, WRONG_VEHICLE, PLATE_UNREADABLE, LOW_CONFIDENCE, ERROR]
+          example: APPLIED
+        fallbackUsed:
+          type: boolean
+          example: false
+        latencyMs:
+          type: integer
+          example: 1240
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-10-23T18:30:00.000Z'
+
+    AiAnalysisResponse:
+      type: object
+      required:
+        - provider
+        - model
+        - fallbackUsed
+        - plate
+        - phase
+        - order
+      properties:
+        provider:
+          type: string
+          example: gemini
+        model:
+          type: string
+          example: gemini-3.1-flash-lite
+        fallbackUsed:
+          type: boolean
+          example: false
+        plate:
+          type: object
+          properties:
+            detected:
+              type: string
+              nullable: true
+              example: XYZ-123
+            expected:
+              type: string
+              example: XYZ-123
+            matched:
+              type: boolean
+              example: true
+            confidence:
+              type: number
+              example: 0.95
+        phase:
+          type: object
+          properties:
+            previous:
+              $ref: '#/components/schemas/Phase'
+            detected:
+              $ref: '#/components/schemas/Phase'
+            current:
+              $ref: '#/components/schemas/Phase'
+            changed:
+              type: boolean
+              example: true
+            regression:
+              type: boolean
+              example: false
+            confidence:
+              type: number
+              example: 0.92
+        dirtLevel:
+          type: string
+          nullable: true
+          enum: [Leve, Moderado, Severo]
+          example: Moderado
+        notes:
+          type: string
+          example: Vehicle covered in active foam shampoo in Bay 1
+        evidenceId:
+          type: integer
+          nullable: true
+          example: 42
+        order:
+          $ref: '#/components/schemas/ServiceOrder'
+
+    AiAnalysesListResponse:
+      type: object
+      required:
+        - data
+        - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AiAnalysis'
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
+
   responses:
     ValidationError:
       description: Bad request due to validation errors, malformed payload, or invalid file type (400)
@@ -1479,6 +1802,21 @@ components:
                 error:
                   code: INVALID_STATE
                   message: Order must be in PENDIENTE phase to mark as ready
+            NotReady:
+              summary: Order is not marked ready to wash
+              value:
+                error:
+                  code: NOT_READY
+                  message: Order is not ready to wash yet
+            WrongVehicle:
+              summary: Plate in image does not match order
+              value:
+                error:
+                  code: WRONG_VEHICLE
+                  message: 'Wrong vehicle: the plate in the image does not match this order'
+                  details:
+                    detected: XYZ-999
+                    expected: ABC-123
 
     PayloadTooLarge:
       description: Uploaded file or JSON body exceeds maximum allowed size (413)
