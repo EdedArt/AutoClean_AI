@@ -2,6 +2,7 @@ const fs = require('fs');
 const prisma = require('../config/db');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
+const { checkOrderAccess } = require('../utils/ownership');
 
 /**
  * Upload photo evidence for a service order
@@ -57,11 +58,16 @@ const getEvidencesByOrder = asyncHandler(async (req, res) => {
 
   const order = await prisma.serviceOrder.findUnique({
     where: { id: orderId },
+    include: {
+      vehicle: true,
+    },
   });
 
   if (!order) {
     throw AppError.notFound('Service order not found');
   }
+
+  checkOrderAccess(order, req.user);
 
   const evidences = await prisma.evidence.findMany({
     where: { serviceOrderId: orderId },

@@ -4,10 +4,11 @@ const asyncHandler = require('../utils/asyncHandler');
 const { getNextPhase, PHASE_PROGRESS_MAP } = require('../services/simulation.service');
 const { calculateDeliveryPrediction } = require('../services/prediction.service');
 const { getPrismaPagination, buildPaginatedResponse } = require('../utils/pagination');
+const { getOrderOwnershipFilter, checkOrderAccess } = require('../utils/ownership');
 
 /**
  * Fetch all service orders with nested vehicle, package, and bay data
- * Supports filtering by placa, fase, bayId, activeOnly, and pagination/sort.
+ * Supports filtering by placa, fase, bayId, activeOnly, pagination/sort, and role-based ownership.
  */
 const getServiceOrders = asyncHandler(async (req, res) => {
   const {
@@ -21,6 +22,11 @@ const getServiceOrders = asyncHandler(async (req, res) => {
   } = req.query || {};
 
   const andConditions = [];
+
+  const ownershipFilter = getOrderOwnershipFilter(req.user);
+  if (Object.keys(ownershipFilter).length > 0) {
+    andConditions.push(ownershipFilter);
+  }
 
   if (placa) {
     andConditions.push({
@@ -175,6 +181,8 @@ const getOrderPrediction = asyncHandler(async (req, res) => {
     throw AppError.notFound('Service order not found');
   }
 
+  checkOrderAccess(order, req.user);
+
   const prediction = calculateDeliveryPrediction(order);
   res.status(200).json(prediction);
 });
@@ -204,6 +212,8 @@ const trackOrderByPlaca = asyncHandler(async (req, res) => {
   if (!order) {
     throw AppError.notFound('No se encontraron órdenes activas para esta placa');
   }
+
+  checkOrderAccess(order, req.user, 'No se encontraron órdenes activas para esta placa');
 
   const prediction = calculateDeliveryPrediction(order);
 

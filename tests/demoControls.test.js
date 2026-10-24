@@ -60,6 +60,8 @@ async function runDemoControlTests() {
     placa: testPlaca,
     marca: 'DemoMaker',
     modelo: 'DemoModel',
+    color: 'Rojo',
+    ownerName: 'Demo Owner',
     nivelSuciedad: 'Severo',
   });
   assert.strictEqual(vRes.status, 201);

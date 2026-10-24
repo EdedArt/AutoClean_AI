@@ -191,6 +191,8 @@ async function runPredictionTests() {
       placa: testPlaca,
       marca: 'AITest',
       modelo: 'Predictor',
+      color: 'Azul',
+      ownerName: 'Prediction Owner',
       nivelSuciedad: 'Moderado',
     });
     assert.strictEqual(vRes.status, 201);

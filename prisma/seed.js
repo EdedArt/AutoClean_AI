@@ -13,7 +13,41 @@ async function main() {
   await prisma.package.deleteMany();
   await prisma.bay.deleteMany();
 
-  // 2. Create 4 Bays
+  // 2. Seed demo users (idempotent upsert)
+  const demoPassword = 'Demo12345!';
+  const passwordHash = await bcrypt.hash(demoPassword, 10);
+
+  const operarioUser = await prisma.user.upsert({
+    where: { email: 'operario@autoclean.com' },
+    update: {
+      passwordHash,
+      nombre: 'Operario Demo',
+      rol: 'OPERARIO',
+    },
+    create: {
+      email: 'operario@autoclean.com',
+      passwordHash,
+      nombre: 'Operario Demo',
+      rol: 'OPERARIO',
+    },
+  });
+
+  const clienteUser = await prisma.user.upsert({
+    where: { email: 'cliente@autoclean.com' },
+    update: {
+      passwordHash,
+      nombre: 'Cliente Demo',
+      rol: 'CLIENTE',
+    },
+    create: {
+      email: 'cliente@autoclean.com',
+      passwordHash,
+      nombre: 'Cliente Demo',
+      rol: 'CLIENTE',
+    },
+  });
+
+  // 3. Create 4 Bays
   const bay1 = await prisma.bay.create({
     data: { numero: 1, ocupada: true },
   });
@@ -27,7 +61,7 @@ async function main() {
     data: { numero: 4, ocupada: false },
   });
 
-  // 3. Create 2 Packages
+  // 4. Create 2 Packages
   const pkgBasico = await prisma.package.create({
     data: {
       nombre: 'Lavado Básico',
@@ -44,12 +78,15 @@ async function main() {
     },
   });
 
-  // 4. Create Vehicles (at least 8 vehicles for demoing search and pagination)
+  // 5. Create Vehicles with color, ownerName and link XYZ-123 to client user
   const vehicle1 = await prisma.vehicle.create({
     data: {
       placa: 'XYZ-123',
       marca: 'Mazda',
-      modelo: 'CX-5',
+      modelo: 'CX-50',
+      color: 'Rojo',
+      ownerName: 'Edgar Arteaga',
+      ownerId: clienteUser.id,
       nivelSuciedad: 'Severo',
     },
   });
@@ -59,6 +96,8 @@ async function main() {
       placa: 'ABC-987',
       marca: 'Toyota',
       modelo: 'Corolla',
+      color: 'Blanco',
+      ownerName: 'Carlos Gómez',
       nivelSuciedad: 'Leve',
     },
   });
@@ -68,6 +107,8 @@ async function main() {
       placa: 'DEF-456',
       marca: 'Chevrolet',
       modelo: 'Tracker',
+      color: 'Gris',
+      ownerName: 'María Rodríguez',
       nivelSuciedad: 'Moderado',
     },
   });
@@ -77,6 +118,8 @@ async function main() {
       placa: 'GHI-789',
       marca: 'Nissan',
       modelo: 'Kicks',
+      color: 'Azul',
+      ownerName: 'Juan Pérez',
       nivelSuciedad: 'Leve',
     },
   });
@@ -86,6 +129,8 @@ async function main() {
       placa: 'JKL-012',
       marca: 'Renault',
       modelo: 'Duster',
+      color: 'Plata',
+      ownerName: 'Ana Martínez',
       nivelSuciedad: 'Severo',
     },
   });
@@ -95,6 +140,8 @@ async function main() {
       placa: 'MNO-345',
       marca: 'Kia',
       modelo: 'Sportage',
+      color: 'Negro',
+      ownerName: 'David López',
       nivelSuciedad: 'Moderado',
     },
   });
@@ -104,6 +151,8 @@ async function main() {
       placa: 'PQR-678',
       marca: 'Ford',
       modelo: 'Escape',
+      color: 'Rojo',
+      ownerName: 'Laura Morales',
       nivelSuciedad: 'Leve',
     },
   });
@@ -113,11 +162,13 @@ async function main() {
       placa: 'STU-901',
       marca: 'Volkswagen',
       modelo: 'Tiguan',
+      color: 'Blanco',
+      ownerName: 'Andrés Castro',
       nivelSuciedad: 'Severo',
     },
   });
 
-  // 5. Create Service Orders across different phases (RECIBIDO, LAVADO, SECADO, LISTO)
+  // 6. Create Service Orders across different phases (RECIBIDO, LAVADO, SECADO, LISTO)
   await prisma.serviceOrder.create({
     data: {
       vehicleId: vehicle1.id,
@@ -165,40 +216,6 @@ async function main() {
       bayId: null,
       faseActual: 'RECIBIDO',
       porcentajeProgreso: 10,
-    },
-  });
-
-  // 6. Seed demo users (idempotent upsert)
-  const demoPassword = 'Demo12345!';
-  const passwordHash = await bcrypt.hash(demoPassword, 10);
-
-  await prisma.user.upsert({
-    where: { email: 'operario@autoclean.com' },
-    update: {
-      passwordHash,
-      nombre: 'Operario Demo',
-      rol: 'OPERARIO',
-    },
-    create: {
-      email: 'operario@autoclean.com',
-      passwordHash,
-      nombre: 'Operario Demo',
-      rol: 'OPERARIO',
-    },
-  });
-
-  await prisma.user.upsert({
-    where: { email: 'cliente@autoclean.com' },
-    update: {
-      passwordHash,
-      nombre: 'Cliente Demo',
-      rol: 'CLIENTE',
-    },
-    create: {
-      email: 'cliente@autoclean.com',
-      passwordHash,
-      nombre: 'Cliente Demo',
-      rol: 'CLIENTE',
     },
   });
 
