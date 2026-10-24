@@ -325,6 +325,8 @@ The backend implements a unified error response contract:
 | **503** | `AI_UNAVAILABLE` | Gemini API request failed (timeout or network error) and fallback is disabled. |
 | **503** | `AI_RATE_LIMITED` | Gemini free tier API quota exceeded (HTTP 429) and fallback is disabled. |
 
+> **Note on Generic Error Codes:** The codes `BAD_REQUEST` (400), `CONFLICT` (409), and `UNPROCESSABLE_ENTITY` (422) are generic fallback codes defined in `AppError` helper defaults, but are not emitted by current endpoints (current endpoints always emit specific domain codes).
+
 ---
 
 ## 11. AI Vision Integration & Calibration Rules
