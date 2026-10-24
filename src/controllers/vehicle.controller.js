@@ -89,8 +89,47 @@ const createVehicle = asyncHandler(async (req, res) => {
   res.status(201).json(newVehicle);
 });
 
+/**
+ * Link or update vehicle owner by client email
+ */
+const updateVehicleOwner = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { ownerEmail } = req.body;
+
+  const vehicle = await prisma.vehicle.findUnique({
+    where: { id },
+  });
+
+  if (!vehicle) {
+    throw AppError.notFound('Vehicle not found');
+  }
+
+  const normalizedEmail = ownerEmail.toLowerCase().trim();
+  const ownerUser = await prisma.user.findUnique({
+    where: { email: normalizedEmail },
+  });
+
+  if (!ownerUser) {
+    throw AppError.notFound('Owner user not found', 'OWNER_NOT_FOUND');
+  }
+
+  if (ownerUser.rol !== 'CLIENTE') {
+    throw AppError.badRequest('Owner user must have CLIENTE role', 'INVALID_OWNER');
+  }
+
+  const updatedVehicle = await prisma.vehicle.update({
+    where: { id },
+    data: {
+      ownerId: ownerUser.id,
+    },
+  });
+
+  res.status(200).json(updatedVehicle);
+});
+
 module.exports = {
   getVehicles,
   getVehicleById,
   createVehicle,
+  updateVehicleOwner,
 };
