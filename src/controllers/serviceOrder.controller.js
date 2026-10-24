@@ -92,6 +92,22 @@ const createServiceOrder = asyncHandler(async (req, res) => {
       throw AppError.notFound('Vehicle not found');
     }
 
+    // Check if vehicle already has an active order
+    const activeOrder = await tx.serviceOrder.findFirst({
+      where: {
+        vehicleId,
+        deliveredAt: null,
+      },
+    });
+    if (activeOrder) {
+      throw new AppError(
+        'Vehicle already has an active service order',
+        409,
+        'ACTIVE_ORDER_EXISTS',
+        { orderId: activeOrder.id, faseActual: activeOrder.faseActual }
+      );
+    }
+
     // Verify package exists if provided
     if (packageId) {
       const packageExists = await tx.package.findUnique({
