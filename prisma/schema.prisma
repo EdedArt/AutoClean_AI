@@ -12,7 +12,11 @@ model Vehicle {
   placa         String         @unique
   marca         String
   modelo        String
-  nivelSuciedad String
+  color         String         @default("Sin especificar")
+  ownerName     String         @default("Sin especificar")
+  ownerId       Int?
+  owner         User?          @relation("UserVehicles", fields: [ownerId], references: [id])
+  nivelSuciedad String?
   createdAt     DateTime       @default(now())
   serviceOrders ServiceOrder[]
 }
@@ -59,10 +63,11 @@ model Evidence {
 }
 
 model User {
-  id           Int      @id @default(autoincrement())
-  email        String   @unique
+  id           Int       @id @default(autoincrement())
+  email        String    @unique
   passwordHash String
   nombre       String
-  rol          String   // "OPERARIO" | "CLIENTE"
-  createdAt    DateTime @default(now())
+  rol          String    // "OPERARIO" | "CLIENTE"
+  createdAt    DateTime  @default(now())
+  vehicles     Vehicle[] @relation("UserVehicles")
 }
