@@ -91,25 +91,26 @@ function getAiStatus() {
 async function analyze(params) {
   const startTime = Date.now();
 
-  // If a mock or custom provider is injected for testing, use it directly
-  if (customProvider) {
+  const effectiveProvider = customProvider?.name || resolveEffectiveProvider();
+  const activeGeminiProvider = customProvider?.name === 'gemini' ? customProvider : geminiProvider;
+
+  // If a mock or custom provider other than gemini is injected, use it directly
+  if (customProvider && customProvider.name !== 'gemini') {
     const res = await customProvider.analyzeImage(params);
     const latencyMs = Date.now() - startTime;
     return {
-      provider: customProvider.name || 'gemini',
-      model: customProvider.model || env.GEMINI_MODEL || 'gemini-3.1-flash-lite',
+      provider: customProvider.name || 'simulated',
+      model: customProvider.model || 'custom',
       result: res,
       latencyMs,
       fallbackUsed: Boolean(customProvider.fallbackUsed),
     };
   }
 
-  const effectiveProvider = resolveEffectiveProvider();
-
   if (effectiveProvider === 'gemini') {
-    const model = env.GEMINI_MODEL || 'gemini-3.1-flash-lite';
+    const model = customProvider?.model || env.GEMINI_MODEL || 'gemini-3.1-flash-lite';
     try {
-      const result = await geminiProvider.analyzeImage(params);
+      const result = await activeGeminiProvider.analyzeImage(params);
       const latencyMs = Date.now() - startTime;
       return {
         provider: 'gemini',

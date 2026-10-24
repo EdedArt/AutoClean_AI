@@ -7,6 +7,8 @@ console.log('====================================\n');
 
 process.env.NODE_ENV = 'test';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret-at-least-32-chars-long-for-testing';
+process.env.AI_MODE = 'simulated';
+process.env.GEMINI_API_KEY = '';
 
 const tests = [
   path.join(__dirname, 'simulation.test.js'),
@@ -21,13 +23,19 @@ const tests = [
   path.join(__dirname, 'auth.test.js'),
   path.join(__dirname, 'ownership.test.js'),
   path.join(__dirname, 'phasesFlow.test.js'),
+  path.join(__dirname, 'aiAnalysis.test.js'),
 ];
 
 for (const testFile of tests) {
   console.log(`▶ Executing: ${path.basename(testFile)}`);
   const result = spawnSync('node', [testFile], {
     stdio: 'inherit',
-    env: { ...process.env, NODE_ENV: 'test' },
+    env: {
+      ...process.env,
+      NODE_ENV: 'test',
+      AI_MODE: 'simulated',
+      GEMINI_API_KEY: '',
+    },
   });
   if (result.status !== 0) {
     console.error(`\n❌ Test failed: ${path.basename(testFile)}`);
