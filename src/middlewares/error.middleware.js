@@ -82,11 +82,15 @@ const errorHandler = (err, req, res, next) => {
         : err.message || 'Internal Server Error';
   }
 
+  const hasDetails =
+    details &&
+    (Array.isArray(details) ? details.length > 0 : typeof details === 'object' && Object.keys(details).length > 0);
+
   const responseBody = {
     error: {
       code,
       message,
-      ...(details && Array.isArray(details) && details.length > 0 ? { details } : {}),
+      ...(hasDetails ? { details } : {}),
     },
     ...(process.env.NODE_ENV !== 'production' && err.stack ? { stack: err.stack } : {}),
   };

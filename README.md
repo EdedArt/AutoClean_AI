@@ -1,5 +1,109 @@
 # AutoClean AI — Backend
 
+## Gemini Vision & Phase Detection (Phase 22)
+
+Phase 22 integrates multimodal computer vision using Google Gen AI (`@google/genai`) to automate bay operations. Camera frames of vehicles in wash bays are analyzed to read Colombian license plates (`XXX-123`) and classify the current wash phase (`PENDIENTE`, `REMOJO`, `LAVADO`, `SECADO`, `LISTO`). When the detected plate matches the order's vehicle, the phase advances automatically via `changePhase(orderId, phase, { source: "AI" })`.
+
+---
+
+### 1. End-to-End Operator Workflow
+
+The complete camera frame analysis workflow follows these steps:
+
+```
+[1. Login as Operario] ──► [2. Create Vehicle & Order] ──► [3. Mark Ready to Wash] ──► [4. AI Vision Analysis]
+    POST /api/auth/login        POST /api/vehicles            POST /api/orders/:id/ready    POST /api/orders/:id/analyze
+    (Bearer Token)              POST /api/orders              (listoParaLavar: true)        (Upload photo frame)
+```
+
+1. **Authenticate as Workshop Staff (`OPERARIO`):**
+   ```bash
+   TOKEN=$(curl -s -X POST http://localhost:3000/api/auth/login \
+     -H "Content-Type: application/json" \
+     -d '{"email":"operario@autoclean.com","password":"Demo12345!"}' | jq -r '.token')
+   ```
+
+2. **Register Vehicle & Create Service Order:**
+   ```bash
+   # Register vehicle
+   curl -X POST http://localhost:3000/api/vehicles \
+     -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"placa":"XYZ-123","marca":"Mazda","modelo":"CX-50","color":"Rojo","ownerName":"Edgar Arteaga"}'
+
+   # Create order in Bay 1
+   curl -X POST http://localhost:3000/api/orders \
+     -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"vehicleId":1,"packageId":1,"bayId":1}'
+   ```
+
+3. **Mark Vehicle Ready to Wash:**
+   ```bash
+   curl -X POST http://localhost:3000/api/orders/1/ready \
+     -H "Authorization: Bearer $TOKEN"
+   ```
+
+4. **Send Camera Frame for AI Analysis:**
+   ```bash
+   curl -X POST http://localhost:3000/api/orders/1/analyze \
+     -H "Authorization: Bearer $TOKEN" \
+     -F "image=@path/to/car_in_bay.jpg" \
+     -F "saveEvidence=true"
+   ```
+
+> [!TIP]
+> **Recommended Setting for AI Demos:**
+> When testing or demonstrating the AI camera vision pipeline, set `SIMULATION_AUTO_ADVANCE=false` in your `.env` (or environment). This stops the automated time-based simulation timer from auto-advancing phases in the background, allowing the AI camera frames to exclusively drive the car wash progression.
+
+---
+
+### 2. Provider Architecture & Automatic Fallback
+
+The backend abstracts vision providers under `src/services/ai/index.js` with three operating modes:
+
+| Mode (`AI_MODE`) | Behavior | Fallback on Gemini Failure |
+| :--- | :--- | :--- |
+| `auto` *(default)* | Uses Gemini if `GEMINI_API_KEY` is configured; otherwise uses simulated provider | If Gemini fails and `AI_FALLBACK_TO_SIMULATED=true`, falls back to simulated provider |
+| `gemini` | Exclusively calls Gemini. Fails fast at startup if `GEMINI_API_KEY` is missing | If Gemini fails and fallback is enabled, uses simulated; if disabled, throws `503 AI_UNAVAILABLE` (or `503 AI_RATE_LIMITED` on quota 429) |
+| `simulated` | Fully local and deterministic. Does not require an API key or internet access | N/A (runs locally) |
+
+#### Fallback Rules:
+* When Gemini encounters quota exhaustion (`HTTP 429` / `RESOURCE_EXHAUSTED`), timeouts (`GEMINI_TIMEOUT_MS`), or network errors:
+  * If `AI_FALLBACK_TO_SIMULATED=true` (default): Immediately falls back to the deterministic simulated provider, returning HTTP 200 with `fallbackUsed: true` and `provider: "simulated"`.
+  * If `AI_FALLBACK_TO_SIMULATED=false`: Returns HTTP `503 AI_RATE_LIMITED` (for quota errors with retry hint) or HTTP `503 AI_UNAVAILABLE`.
+
+---
+
+### 3. Demo Scenarios in Simulated Provider
+
+To facilitate testing and frontend UI demonstrations without a physical camera or vehicle:
+* Form parameter `scenario`:
+  * `wrong_vehicle`: Simulates reading a mismatched license plate (`ZZZ-999`), triggering HTTP `409 Conflict` (`WRONG_VEHICLE`) with details `{ detected: "ZZZ-999", expected: "XYZ-123" }`.
+  * `unreadable`: Simulates an obstructed or blurry plate (`plateDetected: null`), triggering HTTP `422 Unprocessable Entity` (`PLATE_UNREADABLE`).
+  * `regression`: Simulates detecting an earlier phase (e.g. `REMOJO` when order is already in `LAVADO`), returning HTTP 200 with `changed: false` and `regression: true` (the system never regresses phase automatically).
+  * `low_confidence`: Simulates low confidence score (`phaseConfidence: 0.40`), returning HTTP 200 with `changed: false`.
+
+---
+
+### 4. Verification & Testing via CLI Smoke Script
+
+A standalone smoke test script is provided to verify your Google AI Studio API key and model with a real local photo:
+
+```bash
+npm run ai:smoke -- path/to/vehicle.jpg
+```
+* Loads `.env` securely.
+* Passes the image to the AI provider.
+* Prints ONLY the structured output, latency, provider, and model name.
+* **Secrets Protection:** Sanitizes and suppresses any API key values from output and logs.
+
+> [!CAUTION]
+> **Free-Tier Privacy Notice:**
+> When using the free tier of Google AI Studio (Gemini API), Google may use input data and prompts to train and improve its models. Do **NOT** submit photographs of real private license plates or identifiable individuals in production without reviewing your Google Cloud / Workspace terms of service.
+
+---
+
 ## New Wash Phases, Ready-to-Wash Flow and Bay Lifecycle (Phase 21)
 
 Phase 21 establishes a 5-phase wash workflow, introduces an explicit operator "Ready to Wash" trigger, records an immutable chronological phase audit trail (`PhaseEvent`), enforces automated washing bay lifecycle management, and adds configurable simulation controls.
@@ -248,6 +352,9 @@ The backend implements stateless JWT-based authentication and Role-Based Access 
 | `/api/orders/:id/timeline` | `GET` | ❌ | ✅ (Own) | ✅ (All) | Chronological phase events audit trail |
 | `/api/orders` | `POST` | ❌ | ❌ (403) | ✅ | Create new service order |
 | `/api/orders/:id/ready` | `POST` | ❌ | ❌ (403) | ✅ | Mark order ready to wash (OPERARIO only) |
+| `/api/orders/:id/analyze` | `POST` | ❌ | ❌ (403) | ✅ | AI camera frame plate & wash phase analysis |
+| `/api/orders/:id/analyses` | `GET` | ❌ | ❌ (403) | ✅ | Paginated AI analysis history for order |
+| `/api/ai/status` | `GET` | ❌ | ❌ (403) | ✅ | Runtime AI subsystem mode & status probe |
 | `/api/orders/:id/phase` | `PATCH` | ❌ | ❌ (403) | ✅ | Manual phase transition |
 | `/api/orders/:id/simulate/*` | `POST` | ❌ | ❌ (403) | ✅ | Demo simulation controls (advance/pause/resume) |
 | `/api/orders/:orderId/evidence` | `POST` | ❌ | ❌ (403) | ✅ | Upload photographic evidence |
@@ -316,6 +423,13 @@ Environment variables are validated on startup via Zod in `src/config/env.js`. I
 | `JWT_SECRET` | string | *Required (min 32 chars)* | Secret key used to sign and verify JWT tokens |
 | `JWT_EXPIRES_IN` | string | `1d` | Expiration time for generated JWT tokens (e.g. `1d`, `12h`) |
 | `SIMULATION_AUTO_ADVANCE` | boolean | `true` | When true, simulation automatically advances ready orders. When false, scheduler is idle |
+| `GEMINI_API_KEY` | string | Optional | Google AI Studio API key for Gemini multimodal vision |
+| `GEMINI_MODEL` | string | `gemini-3.1-flash-lite` | Model identifier for camera frame analysis |
+| `AI_MODE` | `auto` \| `gemini` \| `simulated` | `auto` | AI engine mode (auto resolves to Gemini if key is set, else simulated) |
+| `AI_FALLBACK_TO_SIMULATED` | boolean | `true` | Fallback to simulated provider when Gemini errors or quota is exhausted |
+| `AI_MIN_CONFIDENCE` | number | `0.6` | Minimum confidence threshold (0.0 - 1.0) for plate recognition and wash phase |
+| `GEMINI_TIMEOUT_MS` | number | `20000` | Timeout in milliseconds for Gemini API requests |
+| `RATE_LIMIT_AI_MAX` | number | `10` | Max requests per IP in window for AI camera frame analysis |
 
 ---
 

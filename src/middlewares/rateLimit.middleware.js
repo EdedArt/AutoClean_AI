@@ -80,9 +80,31 @@ const authLimiter = rateLimit({
   handler: rateLimitHandler('Too many authentication attempts, please try again later.'),
 });
 
+/**
+ * Stricter rate limiter for AI camera vision analysis requests (default: 10 req/min).
+ */
+const aiAnalysisLimiter = rateLimit({
+  windowMs: env.RATE_LIMIT_WINDOW_MS || 60000,
+  limit: () => (process.env.RATE_LIMIT_AI_MAX ? parseInt(process.env.RATE_LIMIT_AI_MAX, 10) : (env.RATE_LIMIT_AI_MAX || 10)),
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => {
+    if (
+      env.NODE_ENV === 'test' &&
+      (!process.env.RATE_LIMIT_AI_MAX || parseInt(process.env.RATE_LIMIT_AI_MAX, 10) >= 10)
+    ) {
+      return true;
+    }
+    return false;
+  },
+  handler: rateLimitHandler('Too many AI analysis requests, please try again later.'),
+});
+
 module.exports = {
   globalLimiter,
   evidenceUploadLimiter,
   authLimiter,
+  aiAnalysisLimiter,
   rateLimitHandler,
 };
+

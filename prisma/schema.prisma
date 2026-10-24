@@ -54,6 +54,7 @@ model ServiceOrder {
   updatedAt           DateTime     @updatedAt
   evidences           Evidence[]
   phaseEvents         PhaseEvent[]
+  aiAnalyses          AiAnalysis[]
 }
 
 model PhaseEvent {
@@ -64,6 +65,24 @@ model PhaseEvent {
   progreso  Int
   source    String       // "MANUAL" | "SIMULATION" | "DEMO" | "AI"
   createdAt DateTime     @default(now())
+
+  @@index([orderId])
+}
+
+model AiAnalysis {
+  id            Int          @id @default(autoincrement())
+  orderId       Int
+  order         ServiceOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  provider      String       // "gemini" | "simulated"
+  model         String
+  plateDetected String?
+  plateMatched  Boolean
+  phaseDetected String?
+  confidence    Float?
+  outcome       String       // "APPLIED" | "UNCHANGED" | "REGRESSION_IGNORED" | "WRONG_VEHICLE" | "PLATE_UNREADABLE" | "LOW_CONFIDENCE" | "ERROR"
+  fallbackUsed  Boolean
+  latencyMs     Int
+  createdAt     DateTime     @default(now())
 
   @@index([orderId])
 }

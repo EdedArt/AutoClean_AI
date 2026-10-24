@@ -17,6 +17,7 @@ const serviceOrderRoutes = require('./src/routes/serviceOrder.routes');
 const evidenceRoutes = require('./src/routes/evidence.routes');
 const authRoutes = require('./src/routes/auth.routes');
 const phaseRoutes = require('./src/routes/phase.routes');
+const aiRoutes = require('./src/routes/ai.routes');
 const { notFoundHandler, errorHandler } = require('./src/middlewares/error.middleware');
 
 const app = express();
@@ -107,6 +108,7 @@ app.use('/api/packages', packageRoutes);
 app.use('/api/orders', serviceOrderRoutes);
 app.use('/api/orders', evidenceRoutes);
 app.use('/api/phases', phaseRoutes);
+app.use('/api', aiRoutes);
 
 
 // Centralized 404 and error handling middlewares
