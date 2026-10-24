@@ -238,6 +238,10 @@ const simulateAdvanceOrder = asyncHandler(async (req, res) => {
     throw AppError.notFound('Service order not found');
   }
 
+  if (order.deliveredAt) {
+    throw AppError.conflict('Order is already delivered', 'ALREADY_DELIVERED');
+  }
+
   if (order.faseActual === 'LISTO') {
     console.warn(`[DEMO] Order #${id} force-advance rejected: Order is already completed.`);
     throw AppError.badRequest('Order is already completed.', 'ORDER_COMPLETED');
@@ -294,6 +298,10 @@ const markOrderReady = asyncHandler(async (req, res) => {
 
   if (!order) {
     throw AppError.notFound('Service order not found');
+  }
+
+  if (order.deliveredAt) {
+    throw AppError.conflict('Order is already delivered', 'ALREADY_DELIVERED');
   }
 
   if (order.faseActual !== 'PENDIENTE') {

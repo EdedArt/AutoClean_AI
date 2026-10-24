@@ -68,7 +68,7 @@ const getNextPhase = (currentPhase) => {
  * @returns {boolean}
  */
 const shouldAdvancePhase = (order, now, durationMs) => {
-  if (!order || !order.faseActual || order.faseActual === 'LISTO') {
+  if (!order || !order.faseActual || order.faseActual === 'LISTO' || order.deliveredAt) {
     return false;
   }
 
