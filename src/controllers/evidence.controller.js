@@ -56,6 +56,10 @@ const uploadEvidence = asyncHandler(async (req, res) => {
 const getEvidencesByOrder = asyncHandler(async (req, res) => {
   const { orderId } = req.params;
 
+  if (req.user && req.user.rol !== 'OPERARIO') {
+    throw AppError.forbidden('Only operators can view photo evidence');
+  }
+
   const order = await prisma.serviceOrder.findUnique({
     where: { id: orderId },
     include: {
@@ -66,8 +70,6 @@ const getEvidencesByOrder = asyncHandler(async (req, res) => {
   if (!order) {
     throw AppError.notFound('Service order not found');
   }
-
-  checkOrderAccess(order, req.user);
 
   const evidences = await prisma.evidence.findMany({
     where: { serviceOrderId: orderId },

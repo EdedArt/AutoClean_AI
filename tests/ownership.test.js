@@ -280,11 +280,11 @@ async function runOwnershipTests() {
     assert.strictEqual(client1Pred.status, 200);
     assert.ok(client1Pred.body.estimatedDeliveryTime);
 
-    // Client 1 evidence list
+    // Client 1 evidence list -> 403 FORBIDDEN (clients cannot access photos even for own vehicle)
     const client1Ev = await makeRequest('GET', `/api/orders/${order1.id}/evidence`, null, client1Headers);
-    assert.strictEqual(client1Ev.status, 200);
-    assert.ok(Array.isArray(client1Ev.body));
-    console.log('  ✅ Client 1 successfully accesses orders, tracking, prediction, and evidence.');
+    assert.strictEqual(client1Ev.status, 403);
+    assert.strictEqual(client1Ev.body.error.code, 'FORBIDDEN');
+    console.log('  ✅ Client 1 successfully accesses orders, tracking, prediction; evidence is forbidden (403).');
 
     // Client 2 orders list -> does not contain order1
     const client2Orders = await makeRequest('GET', '/api/orders', null, client2Headers);
@@ -308,11 +308,11 @@ async function runOwnershipTests() {
     assert.strictEqual(client2Pred.status, 404);
     assert.strictEqual(client2Pred.body.error.code, 'NOT_FOUND');
 
-    // Client 2 evidence list -> 404 NOT_FOUND
+    // Client 2 evidence list -> 403 FORBIDDEN
     const client2Ev = await makeRequest('GET', `/api/orders/${order1.id}/evidence`, null, client2Headers);
-    assert.strictEqual(client2Ev.status, 404);
-    assert.strictEqual(client2Ev.body.error.code, 'NOT_FOUND');
-    console.log('  ✅ Client 2 receives 404 NOT_FOUND on prediction and evidence for unowned vehicle.');
+    assert.strictEqual(client2Ev.status, 403);
+    assert.strictEqual(client2Ev.body.error.code, 'FORBIDDEN');
+    console.log('  ✅ Client 2 receives 404 on prediction for unowned vehicle, and 403 on evidence.');
 
     // 7. Operator sees all records
     console.log('\n7. Testing operator has global visibility...');
@@ -329,7 +329,11 @@ async function runOwnershipTests() {
 
     const opPred = await makeRequest('GET', `/api/orders/${order1.id}/prediction`, null, operatorHeaders);
     assert.strictEqual(opPred.status, 200);
-    console.log('  ✅ Operator has full visibility across all vehicles, orders, and predictions.');
+
+    const opEv = await makeRequest('GET', `/api/orders/${order1.id}/evidence`, null, operatorHeaders);
+    assert.strictEqual(opEv.status, 200);
+    assert.ok(Array.isArray(opEv.body));
+    console.log('  ✅ Operator has full visibility across all vehicles, orders, predictions, and evidence.');
 
     // 8. PATCH /api/vehicles/:id/owner transfer to Client 2
     console.log('\n8. Testing PATCH /api/vehicles/:id/owner transferring ownership to Client 2...');
