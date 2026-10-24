@@ -61,6 +61,9 @@ async function runSmoke() {
     console.log(`Model:         ${analysis.model}`);
     console.log(`Fallback used: ${analysis.fallbackUsed}`);
     console.log(`Latency:       ${analysis.latencyMs} ms`);
+    console.log(`Phase:         ${analysis.result.phase} (${analysis.result.phaseConfidence}) [via ${analysis.result.phaseSource}]`);
+    console.log(`Phase Reason:  ${analysis.result.phaseReason}`);
+    console.log(`Observations:  ${JSON.stringify(analysis.result.observations)}`);
     console.log('Structured Output:');
     console.log(JSON.stringify(analysis.result, null, 2));
     console.log('---------------------------------\n');
