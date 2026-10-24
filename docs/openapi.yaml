@@ -423,6 +423,13 @@ paths:
           schema:
             type: boolean
             example: true
+        - name: active
+          in: query
+          required: false
+          description: When true, filters orders currently active (deliveredAt null); when false, filters delivered orders
+          schema:
+            type: boolean
+            example: true
         - name: sort
           in: query
           required: false
@@ -513,6 +520,38 @@ paths:
       responses:
         '200':
           description: Service order successfully marked ready to wash
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceOrder'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/orders/{id}/deliver:
+    post:
+      tags:
+        - Orders
+      summary: Deliver service order
+      description: Marks an order in LISTO phase as delivered by recording deliveredAt timestamp. Restricted to role OPERARIO.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Numeric identifier of the service order
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Service order successfully marked as delivered
           content:
             application/json:
               schema:
@@ -1262,6 +1301,26 @@ components:
           format: date-time
           nullable: true
           example: null
+        deliveredAt:
+          type: string
+          format: date-time
+          nullable: true
+          example: null
+          description: Timestamp when the order was delivered to the client
+        etaMinutes:
+          type: integer
+          example: 25
+          description: Realistic remaining minutes until vehicle is ready
+        etaLabel:
+          type: string
+          example: Aprox. 25 min
+          description: Human-readable realistic ETA label
+        estimatedReadyAt:
+          type: string
+          format: date-time
+          nullable: true
+          example: '2026-10-23T12:40:00.000Z'
+          description: Estimated ISO 8601 timestamp when vehicle is ready
         createdAt:
           type: string
           format: date-time
@@ -1857,6 +1916,27 @@ components:
                   details:
                     detected: XYZ-999
                     expected: ABC-123
+            ActiveOrderExists:
+              summary: Vehicle already has an active order (409)
+              value:
+                error:
+                  code: ACTIVE_ORDER_EXISTS
+                  message: Vehicle already has an active service order
+                  details:
+                    orderId: 1
+                    faseActual: LAVADO
+            NotFinished:
+              summary: Order cannot be delivered until it reaches LISTO phase (409)
+              value:
+                error:
+                  code: NOT_FINISHED
+                  message: Order cannot be delivered until it reaches LISTO phase
+            AlreadyDelivered:
+              summary: Order is already delivered (409)
+              value:
+                error:
+                  code: ALREADY_DELIVERED
+                  message: Order is already delivered
 
     PayloadTooLarge:
       description: Uploaded file or JSON body exceeds maximum allowed size (413)
