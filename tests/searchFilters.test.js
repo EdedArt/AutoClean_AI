@@ -84,7 +84,7 @@ async function runSearchFiltersTests() {
       data: {
         vehicleId: v1.id,
         faseActual: 'LAVADO',
-        porcentajeProgreso: 45,
+        porcentajeProgreso: 55,
         bayId: bay1 ? bay1.id : null,
       },
     });
@@ -226,6 +226,7 @@ async function runSearchFiltersTests() {
   } finally {
     for (const orderId of createdOrderIds) {
       await prisma.evidence.deleteMany({ where: { serviceOrderId: orderId } });
+      await prisma.phaseEvent.deleteMany({ where: { orderId } });
       await prisma.serviceOrder.deleteMany({ where: { id: orderId } });
     }
     for (const vehicleId of createdVehicleIds) {

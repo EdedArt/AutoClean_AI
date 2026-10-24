@@ -78,8 +78,8 @@ async function runIntegrationTest() {
   });
   assert.strictEqual(oRes.status, 201);
   const order = oRes.body;
-  assert.strictEqual(order.faseActual, 'RECIBIDO');
-  console.log(`✅ Order #${order.id} created in RECIBIDO for vehicle ${testPlaca}`);
+  assert.strictEqual(order.faseActual, 'PENDIENTE');
+  console.log(`✅ Order #${order.id} created in PENDIENTE for vehicle ${testPlaca}`);
 
   // 2b. Verify paginated envelope on GET /api/vehicles and GET /api/orders
   const vListRes = await makeRequest('GET', '/api/vehicles');
@@ -101,8 +101,8 @@ async function runIntegrationTest() {
   // 3. Test tracking endpoint initially
   const trackInitial = await makeRequest('GET', `/api/orders/track/${testPlaca}`);
   assert.strictEqual(trackInitial.status, 200);
-  assert.strictEqual(trackInitial.body.faseActual, 'RECIBIDO');
-  console.log('✅ GET /api/orders/track/:placa verified initial status RECIBIDO');
+  assert.strictEqual(trackInitial.body.faseActual, 'PENDIENTE');
+  console.log('✅ GET /api/orders/track/:placa verified initial status PENDIENTE');
 
   // 4. Test manual PATCH /api/orders/:id/phase still works
   const patchRes = await makeRequest('PATCH', `/api/orders/${order.id}/phase`, {
@@ -110,13 +110,13 @@ async function runIntegrationTest() {
   });
   assert.strictEqual(patchRes.status, 200);
   assert.strictEqual(patchRes.body.faseActual, 'LAVADO');
-  assert.strictEqual(patchRes.body.porcentajeProgreso, 45);
-  console.log('✅ Manual PATCH /api/orders/:id/phase works correctly (advanced to LAVADO, 45%)');
+  assert.strictEqual(patchRes.body.porcentajeProgreso, 55);
+  console.log('✅ Manual PATCH /api/orders/:id/phase works correctly (advanced to LAVADO, 55%)');
 
   // 5. Test Tracking again to verify manual change is visible
   const trackAfterPatch = await makeRequest('GET', `/api/orders/track/${testPlaca}`);
   assert.strictEqual(trackAfterPatch.body.faseActual, 'LAVADO');
-  assert.strictEqual(trackAfterPatch.body.porcentajeProgreso, 45);
+  assert.strictEqual(trackAfterPatch.body.porcentajeProgreso, 55);
   console.log('✅ Tracking endpoint confirms manual change');
 
   // 6. Test that LISTO orders remain unchanged
@@ -134,6 +134,7 @@ async function runIntegrationTest() {
   console.log('✅ Orders in LISTO phase remain unchanged');
 
   // Cleanup
+  await prisma.phaseEvent.deleteMany({ where: { order: { vehicleId: vehicle.id } } });
   await prisma.serviceOrder.deleteMany({ where: { vehicleId: vehicle.id } });
   await prisma.vehicle.delete({ where: { id: vehicle.id } });
 

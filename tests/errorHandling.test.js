@@ -249,6 +249,7 @@ async function runErrorHandlingTests() {
     // Cleanup
     if (testVehicle) {
       await prisma.evidence.deleteMany({ where: { serviceOrder: { vehicleId: testVehicle.id } } });
+      await prisma.phaseEvent.deleteMany({ where: { order: { vehicleId: testVehicle.id } } });
       await prisma.serviceOrder.deleteMany({ where: { vehicleId: testVehicle.id } });
       await prisma.vehicle.delete({ where: { id: testVehicle.id } });
     }

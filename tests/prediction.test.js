@@ -65,7 +65,8 @@ async function runPredictionTests() {
 
   // 1. Remaining phases count
   console.log('1. Testing getRemainingPhasesCount...');
-  assert.strictEqual(getRemainingPhasesCount('RECIBIDO'), 3);
+  assert.strictEqual(getRemainingPhasesCount('PENDIENTE'), 4);
+  assert.strictEqual(getRemainingPhasesCount('REMOJO'), 3);
   assert.strictEqual(getRemainingPhasesCount('LAVADO'), 2);
   assert.strictEqual(getRemainingPhasesCount('SECADO'), 1);
   assert.strictEqual(getRemainingPhasesCount('LISTO'), 0);
@@ -93,21 +94,35 @@ async function runPredictionTests() {
   const mockNow = 1700000000000;
   const phaseDuration = 60000;
 
-  const recibidoOrder = {
+  const pendienteOrder = {
     id: 101,
-    faseActual: 'RECIBIDO',
+    faseActual: 'PENDIENTE',
+    listoParaLavar: true,
     updatedAt: new Date(mockNow),
     createdAt: new Date(mockNow),
   };
-  const predRecibido = calculateDeliveryPrediction(recibidoOrder, {
+  const predPendiente = calculateDeliveryPrediction(pendienteOrder, {
+    now: mockNow,
+    phaseDurationMs: phaseDuration,
+  });
+  // 4 phases remaining -> 4 * 60000ms = 240000ms
+  assert.strictEqual(predPendiente.estimatedDeliveryTime.getTime(), mockNow + 240000);
+  assert.strictEqual(predPendiente.recalculated, false);
+  assert.strictEqual(predPendiente.message, null);
+  assert.strictEqual(predPendiente.accuracyPercentage, getDeterministicAccuracy(101));
+
+  const remojoOrder = {
+    id: 100,
+    faseActual: 'REMOJO',
+    listoParaLavar: true,
+    updatedAt: new Date(mockNow),
+  };
+  const predRemojo = calculateDeliveryPrediction(remojoOrder, {
     now: mockNow,
     phaseDurationMs: phaseDuration,
   });
   // 3 phases remaining -> 3 * 60000ms = 180000ms
-  assert.strictEqual(predRecibido.estimatedDeliveryTime.getTime(), mockNow + 180000);
-  assert.strictEqual(predRecibido.recalculated, false);
-  assert.strictEqual(predRecibido.message, null);
-  assert.strictEqual(predRecibido.accuracyPercentage, getDeterministicAccuracy(101));
+  assert.strictEqual(predRemojo.estimatedDeliveryTime.getTime(), mockNow + 180000);
 
   const lavadoOrder = {
     id: 102,
@@ -154,6 +169,7 @@ async function runPredictionTests() {
   const delayedOrder = {
     id: 105,
     faseActual: 'LAVADO',
+    listoParaLavar: true,
     updatedAt: new Date(mockNow - 75000), // 75 seconds ago (> 60s phase duration)
   };
   const predDelayed = calculateDeliveryPrediction(delayedOrder, {
@@ -163,9 +179,18 @@ async function runPredictionTests() {
   assert.strictEqual(predDelayed.recalculated, true);
   assert.strictEqual(predDelayed.message, 'Tiempo recalculado por posible retraso');
 
+  // Unready order should never be flagged as delayed
+  const predUnready = calculateDeliveryPrediction({ ...delayedOrder, listoParaLavar: false }, {
+    now: mockNow,
+    phaseDurationMs: phaseDuration,
+  });
+  assert.strictEqual(predUnready.recalculated, false);
+  assert.strictEqual(predUnready.message, null);
+
   const onTimeOrder = {
     id: 106,
     faseActual: 'LAVADO',
+    listoParaLavar: true,
     updatedAt: new Date(mockNow - 45000), // 45 seconds ago (<= 60s phase duration)
   };
   const predOnTime = calculateDeliveryPrediction(onTimeOrder, {
@@ -226,17 +251,30 @@ async function runPredictionTests() {
 
     // 7. Test delay detection via database timestamp manipulation
     console.log('\n7. Testing delay detection via API endpoint...');
+    // Unready orders must NOT be flagged as delayed
     await prisma.serviceOrder.update({
       where: { id: testOrder.id },
       data: {
         updatedAt: new Date(Date.now() - 120000), // 2 minutes ago (> 60s)
       },
     });
+    const unreadyDelayedRes = await makeRequest('GET', `/api/orders/${testOrder.id}/prediction`);
+    assert.strictEqual(unreadyDelayedRes.status, 200);
+    assert.strictEqual(unreadyDelayedRes.body.recalculated, false);
+
+    // Mark ready: now delay is detected
+    await makeRequest('POST', `/api/orders/${testOrder.id}/ready`);
+    await prisma.serviceOrder.update({
+      where: { id: testOrder.id },
+      data: {
+        updatedAt: new Date(Date.now() - 120000),
+      },
+    });
     const delayedRes = await makeRequest('GET', `/api/orders/${testOrder.id}/prediction`);
     assert.strictEqual(delayedRes.status, 200);
     assert.strictEqual(delayedRes.body.recalculated, true);
     assert.strictEqual(delayedRes.body.message, 'Tiempo recalculado por posible retraso');
-    console.log('  ✅ Delay detection triggers through API endpoint for stuck order.');
+    console.log('  ✅ Delay detection triggers through API endpoint for stuck order once ready.');
 
     // 8. Test prediction on force-completed (LISTO) order
     console.log('\n8. Testing prediction on LISTO order...');
@@ -276,6 +314,7 @@ async function runPredictionTests() {
   } finally {
     // Cleanup
     if (testOrder && testVehicle) {
+      await prisma.phaseEvent.deleteMany({ where: { orderId: testOrder.id } });
       await prisma.serviceOrder.deleteMany({ where: { vehicleId: testVehicle.id } });
       await prisma.vehicle.delete({ where: { id: testVehicle.id } });
     }

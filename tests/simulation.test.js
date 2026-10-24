@@ -7,6 +7,7 @@ const {
   advanceOrderPhase,
   PHASE_PROGRESS_MAP,
   NEXT_PHASE_MAP,
+  VALID_PHASES,
 } = require('../src/services/simulation.service');
 
 async function runTests() {
@@ -14,7 +15,8 @@ async function runTests() {
 
   // Test 1: Phase mapping checks
   console.log('1. Testing getNextPhase mapping...');
-  assert.strictEqual(getNextPhase('RECIBIDO'), 'LAVADO');
+  assert.strictEqual(getNextPhase('PENDIENTE'), 'REMOJO');
+  assert.strictEqual(getNextPhase('REMOJO'), 'LAVADO');
   assert.strictEqual(getNextPhase('LAVADO'), 'SECADO');
   assert.strictEqual(getNextPhase('SECADO'), 'LISTO');
   assert.strictEqual(getNextPhase('LISTO'), null);
@@ -23,11 +25,12 @@ async function runTests() {
 
   // Test 2: Phase progress percentage mapping
   console.log('2. Testing PHASE_PROGRESS_MAP...');
-  assert.strictEqual(PHASE_PROGRESS_MAP.RECIBIDO, 10);
-  assert.strictEqual(PHASE_PROGRESS_MAP.LAVADO, 45);
+  assert.strictEqual(PHASE_PROGRESS_MAP.PENDIENTE, 10);
+  assert.strictEqual(PHASE_PROGRESS_MAP.REMOJO, 30);
+  assert.strictEqual(PHASE_PROGRESS_MAP.LAVADO, 55);
   assert.strictEqual(PHASE_PROGRESS_MAP.SECADO, 80);
   assert.strictEqual(PHASE_PROGRESS_MAP.LISTO, 100);
-  console.log('  ✅ Progress percentages match requirements (10%, 45%, 80%, 100%).\n');
+  console.log('  ✅ Progress percentages match requirements (10%, 30%, 55%, 80%, 100%).\n');
 
   // Test 3: Environment variable duration parsing
   console.log('3. Testing getPhaseDurationMs configuration...');
@@ -44,15 +47,18 @@ async function runTests() {
   process.env.SIMULATION_PHASE_DURATION_MS = originalEnv || '60000';
   console.log('  ✅ Environment variable duration parsing works correctly.\n');
 
-  // Test 4: shouldAdvancePhase time check
+  // Test 4: shouldAdvancePhase time and readiness check
   console.log('4. Testing shouldAdvancePhase eligibility check...');
   const baseTime = 1000000000000;
   const mockOrder = {
     id: 999,
-    faseActual: 'RECIBIDO',
+    faseActual: 'PENDIENTE',
+    listoParaLavar: true,
     updatedAt: new Date(baseTime),
   };
 
+  // Not ready to wash: must never advance
+  assert.strictEqual(shouldAdvancePhase({ ...mockOrder, listoParaLavar: false }, baseTime + 120000, 60000), false);
   // Not enough time passed (30s < 60s)
   assert.strictEqual(shouldAdvancePhase(mockOrder, baseTime + 30000, 60000), false);
   // Exactly enough time passed (60s == 60s)
@@ -64,10 +70,11 @@ async function runTests() {
   const mockOrderDone = {
     id: 999,
     faseActual: 'LISTO',
+    listoParaLavar: true,
     updatedAt: new Date(baseTime),
   };
   assert.strictEqual(shouldAdvancePhase(mockOrderDone, baseTime + 200000, 60000), false);
-  console.log('  ✅ Eligibility and LISTO skipping validated.\n');
+  console.log('  ✅ Eligibility, unready skipping, and LISTO skipping validated.\n');
 
   // Test 5: End-to-end database simulation flow
   console.log('5. Testing database order lifecycle advancement...');
@@ -77,6 +84,8 @@ async function runTests() {
       placa: testPlaca,
       marca: 'TestMarca',
       modelo: 'TestModel',
+      color: 'Blanco',
+      ownerName: 'Simulation Owner',
       nivelSuciedad: 'Severo',
     },
   });
@@ -84,8 +93,9 @@ async function runTests() {
   const order = await prisma.serviceOrder.create({
     data: {
       vehicleId: vehicle.id,
-      faseActual: 'RECIBIDO',
+      faseActual: 'PENDIENTE',
       porcentajeProgreso: 10,
+      listoParaLavar: true,
     },
   });
 
@@ -96,26 +106,32 @@ async function runTests() {
     const noAdvance = await advanceOrderPhase(order, { now: startTime + 1000, durationMs: 60000 });
     assert.strictEqual(noAdvance, null);
 
-    // 5b. Advance RECIBIDO -> LAVADO
-    const advancedToLavado = await advanceOrderPhase(order, { now: startTime + 61000, durationMs: 60000 });
+    // 5b. Advance PENDIENTE -> REMOJO
+    const advancedToRemojo = await advanceOrderPhase(order, { now: startTime + 61000, durationMs: 60000 });
+    assert.ok(advancedToRemojo);
+    assert.strictEqual(advancedToRemojo.faseActual, 'REMOJO');
+    assert.strictEqual(advancedToRemojo.porcentajeProgreso, 30);
+
+    // 5c. Advance REMOJO -> LAVADO
+    const advancedToLavado = await advanceOrderPhase(advancedToRemojo, { now: startTime + 122000, durationMs: 60000 });
     assert.ok(advancedToLavado);
     assert.strictEqual(advancedToLavado.faseActual, 'LAVADO');
-    assert.strictEqual(advancedToLavado.porcentajeProgreso, 45);
+    assert.strictEqual(advancedToLavado.porcentajeProgreso, 55);
 
-    // 5c. Advance LAVADO -> SECADO
-    const advancedToSecado = await advanceOrderPhase(advancedToLavado, { now: startTime + 122000, durationMs: 60000 });
+    // 5d. Advance LAVADO -> SECADO
+    const advancedToSecado = await advanceOrderPhase(advancedToLavado, { now: startTime + 183000, durationMs: 60000 });
     assert.ok(advancedToSecado);
     assert.strictEqual(advancedToSecado.faseActual, 'SECADO');
     assert.strictEqual(advancedToSecado.porcentajeProgreso, 80);
 
-    // 5d. Advance SECADO -> LISTO
-    const advancedToListo = await advanceOrderPhase(advancedToSecado, { now: startTime + 183000, durationMs: 60000 });
+    // 5e. Advance SECADO -> LISTO
+    const advancedToListo = await advanceOrderPhase(advancedToSecado, { now: startTime + 244000, durationMs: 60000 });
     assert.ok(advancedToListo);
     assert.strictEqual(advancedToListo.faseActual, 'LISTO');
     assert.strictEqual(advancedToListo.porcentajeProgreso, 100);
 
-    // 5e. Attempting to advance LISTO order returns null
-    const noAdvanceFromListo = await advanceOrderPhase(advancedToListo, { now: startTime + 300000, durationMs: 60000 });
+    // 5f. Attempting to advance LISTO order returns null
+    const noAdvanceFromListo = await advanceOrderPhase(advancedToListo, { now: startTime + 350000, durationMs: 60000 });
     assert.strictEqual(noAdvanceFromListo, null);
 
     // Check DB state directly
@@ -123,9 +139,10 @@ async function runTests() {
     assert.strictEqual(finalOrder.faseActual, 'LISTO');
     assert.strictEqual(finalOrder.porcentajeProgreso, 100);
 
-    console.log('  ✅ Full lifecycle from RECIBIDO to LISTO completed and verified in DB.\n');
+    console.log('  ✅ Full lifecycle from PENDIENTE to LISTO completed and verified in DB.\n');
   } finally {
     // Cleanup test data
+    await prisma.phaseEvent.deleteMany({ where: { orderId: order.id } });
     await prisma.serviceOrder.deleteMany({ where: { vehicleId: vehicle.id } });
     await prisma.vehicle.delete({ where: { id: vehicle.id } });
     await prisma.$disconnect();
