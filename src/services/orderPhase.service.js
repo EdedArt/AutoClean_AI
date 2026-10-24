@@ -1,4 +1,4 @@
-const prisma = require('../config/prisma');
+const prisma = require('../config/db');
 const AppError = require('../utils/AppError');
 const { VALID_PHASES, PHASE_PROGRESS_MAP } = require('./simulation.service');
 
