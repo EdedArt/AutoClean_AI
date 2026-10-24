@@ -1,5 +1,105 @@
 # AutoClean AI — Backend
 
+## New Wash Phases, Ready-to-Wash Flow and Bay Lifecycle (Phase 21)
+
+Phase 21 establishes a 5-phase wash workflow, introduces an explicit operator "Ready to Wash" trigger, records an immutable chronological phase audit trail (`PhaseEvent`), enforces automated washing bay lifecycle management, and adds configurable simulation controls.
+
+---
+
+### 1. Wash Phase Catalog & Progress Table
+
+Wash phases are centrally managed in `src/services/simulation.service.js` with Spanish display labels and fixed progress percentages:
+
+| Phase Code | Display Label | Progress | Order | Description |
+| :--- | :--- | :---: | :---: | :--- |
+| `PENDIENTE` | Pendiente | `10%` | 1 | Initial order state upon creation; car is queued and not yet ready for washing. |
+| `REMOJO` | Remojo | `30%` | 2 | Initial soaking, degreasing, and pre-wash rinse cycle. |
+| `LAVADO` | Lavando | `55%` | 3 | Active foam shampoo application and mechanical washing. |
+| `SECADO` | Secado | `80%` | 4 | Air drying, microfiber towel wipe-down, and finishing. |
+| `LISTO` | Listo | `100%` | 5 | Service complete; vehicle is ready for client delivery and bay is automatically freed. |
+
+#### Phase Catalog Endpoint (`GET /api/phases`)
+* **Access:** Authenticated (`OPERARIO` or `CLIENTE`).
+* **Response (200 OK):**
+  ```json
+  [
+    { "code": "PENDIENTE", "label": "Pendiente", "progress": 10, "order": 1 },
+    { "code": "REMOJO", "label": "Remojo", "progress": 30, "order": 2 },
+    { "code": "LAVADO", "label": "Lavando", "progress": 55, "order": 3 },
+    { "code": "SECADO", "label": "Secado", "progress": 80, "order": 4 },
+    { "code": "LISTO", "label": "Listo", "progress": 100, "order": 5 }
+  ]
+  ```
+
+---
+
+### 2. Operator Workflow: From Vehicle to Finished Wash
+
+The complete operational flow for workshop staff follows 4 steps:
+
+```
+[1. POST /api/vehicles]  ──►  [2. POST /api/orders]  ──►  [3. POST /api/orders/:id/ready]  ──►  [4. Phase Progression]
+  Register vehicle               Starts PENDIENTE (10%)        Operator marks ready              REMOJO (30%) -> LAVADO (55%) ->
+  with plate & owner             Bay marked occupied           Timer starts (readyAt)            SECADO (80%) -> LISTO (100%, bay freed)
+```
+
+1. **Register the Vehicle:**
+   * Staff registers the vehicle (`POST /api/vehicles`) with plate, make, model, color, and owner.
+2. **Create the Service Order:**
+   * Staff creates the order (`POST /api/orders`) specifying `vehicleId`, `packageId`, and `bayId`.
+   * **Initial State:** Created with `faseActual: "PENDIENTE"`, `porcentajeProgreso: 10`, `listoParaLavar: false`, and `readyAt: null`.
+   * **Bay Assignment:** If `bayId` is provided, the target bay is automatically checked and marked `ocupada: true` within the exact same database transaction. Attempting to assign an occupied bay returns HTTP `409 Conflict` (`BAY_OCCUPIED`).
+   * **Initial Audit Event:** Automatically records the first `PhaseEvent` (`fase: "PENDIENTE"`, `progreso: 10`, `source: "MANUAL"`).
+3. **Trigger "Ready to Wash" (`POST /api/orders/:id/ready`):**
+   * When the car is physically positioned in the bay and ready for the wash cycle, the operator calls the ready endpoint.
+   * **Role:** `OPERARIO` only (returns `403 Forbidden` for `CLIENTE`).
+   * **Updates:** Sets `listoParaLavar: true`, `readyAt: new Date()`, and updates `updatedAt: new Date()`.
+   * **Validation Guards:**
+     * If already ready (`listoParaLavar: true`) -> returns HTTP `409 Conflict` (`ALREADY_READY`).
+     * If not in `PENDIENTE` phase -> returns HTTP `409 Conflict` (`INVALID_STATE`).
+     * If order does not exist -> returns HTTP `404 Not Found` (`NOT_FOUND`).
+   * **Console Log:** Emits `[READY] Order #<id> marked ready to wash`.
+4. **Phase Progression & Completion:**
+   * Once ready, the order is eligible for automated background progression (`SIMULATION`), manual technician updates (`MANUAL`), or demo overrides (`DEMO`).
+   * Transitioning to `LISTO` (100%) automatically marks the bay `ocupada: false`.
+
+---
+
+### 3. Bay Lifecycle Management
+
+Washing bays are managed transactionally during order lifecycle events:
+* **Occupied on Creation:** When `POST /api/orders` assigns a `bayId`, the bay becomes `ocupada: true`.
+* **Freed on Completion:** Whenever an order reaches `LISTO` (via `changePhase`), the associated bay is automatically released (`ocupada: false`).
+* **Re-occupancy on Reset:** If an order leaves `LISTO` (e.g. `POST /api/orders/:id/simulate/reset` back to `PENDIENTE`), the service attempts to re-occupy the assigned bay:
+  * If the bay is currently free -> re-occupies the bay (`ocupada: true`).
+  * If the bay has since been taken by another order -> aborts transaction and returns HTTP `409 Conflict` (`BAY_OCCUPIED`).
+* **Real-time Occupancy Badge (`GET /api/bays/summary`):** Accurately reflects current bay states (`total`, `occupied`, `free`).
+
+---
+
+### 4. Order Phase Timeline Audit Trail (`GET /api/orders/:id/timeline`)
+
+Every phase change is recorded in an immutable audit table (`PhaseEvent`) with fields:
+* `fase`: Canonical phase (`PENDIENTE`, `REMOJO`, `LAVADO`, `SECADO`, `LISTO`).
+* `label`: Spanish display label (`Pendiente`, `Remojo`, `Lavando`, `Secado`, `Listo`).
+* `progreso`: Progress percentage at the time of the event (`10`, `30`, `55`, `80`, `100`).
+* `source`: Origin of the transition (`MANUAL`, `SIMULATION`, `DEMO`, or `AI`).
+* `createdAt`: ISO-8601 timestamp when the event occurred.
+
+* **Client Ownership Security:** If an authenticated `CLIENTE` requests the timeline of an order belonging to another customer's vehicle, the API responds with HTTP `404 Not Found` to preserve complete privacy.
+
+---
+
+### 5. Configurable Simulation & Delay Detection (`SIMULATION_AUTO_ADVANCE`)
+
+* **Simulation Guard:** Background auto-advancement only processes orders where `listoParaLavar === true` and `faseActual !== "LISTO"`. Unready `PENDIENTE` orders remain paused indefinitely until an operator activates them.
+* **Master Switch (`SIMULATION_AUTO_ADVANCE`):**
+  * When `true` (default): Background simulation loop advances eligible orders every interval.
+  * When `false`: Scheduler loop executes cleanly without advancing any orders (designed for upcoming AI camera integration).
+* **Smart Delay Detection:** Orders resting in `PENDIENTE` that are not yet marked ready are **never** flagged as delayed (`recalculated: false`). Delay recalculation only begins after the operator presses "Ready to Wash".
+
+---
+
 ## Vehicle Ownership, Color and Per-Client Visibility (Phase 20)
 
 Phase 20 introduces client ownership attribution, vehicle visual attributes (`color`), contact owner metadata (`ownerName`), and strict per-client visibility rules for personal vehicle tracking.
@@ -142,9 +242,12 @@ The backend implements stateless JWT-based authentication and Role-Based Access 
 | `/api/vehicles/:id` | `GET` | ❌ | ✅ (Own) | ✅ (All) | Retrieve vehicle details |
 | `/api/vehicles` | `POST` | ❌ | ❌ (403) | ✅ | Register new workshop vehicle |
 | `/api/vehicles/:id/owner` | `PATCH` | ❌ | ❌ (403) | ✅ | Link or update vehicle owner by client email |
+| `/api/phases` | `GET` | ❌ | ✅ | ✅ | Wash phase catalog with display labels and progress |
 | `/api/orders` | `GET` | ❌ | ✅ (Own) | ✅ (All) | List & filter orders (paginated) |
 | `/api/orders/:id` | `GET` | ❌ | ✅ (Own) | ✅ (All) | Order details with bay & package info |
+| `/api/orders/:id/timeline` | `GET` | ❌ | ✅ (Own) | ✅ (All) | Chronological phase events audit trail |
 | `/api/orders` | `POST` | ❌ | ❌ (403) | ✅ | Create new service order |
+| `/api/orders/:id/ready` | `POST` | ❌ | ❌ (403) | ✅ | Mark order ready to wash (OPERARIO only) |
 | `/api/orders/:id/phase` | `PATCH` | ❌ | ❌ (403) | ✅ | Manual phase transition |
 | `/api/orders/:id/simulate/*` | `POST` | ❌ | ❌ (403) | ✅ | Demo simulation controls (advance/pause/resume) |
 | `/api/orders/:orderId/evidence` | `POST` | ❌ | ❌ (403) | ✅ | Upload photographic evidence |
@@ -212,6 +315,7 @@ Environment variables are validated on startup via Zod in `src/config/env.js`. I
 | `RATE_LIMIT_AUTH_MAX` | number | `10` | Max requests per IP in window for auth routes |
 | `JWT_SECRET` | string | *Required (min 32 chars)* | Secret key used to sign and verify JWT tokens |
 | `JWT_EXPIRES_IN` | string | `1d` | Expiration time for generated JWT tokens (e.g. `1d`, `12h`) |
+| `SIMULATION_AUTO_ADVANCE` | boolean | `true` | When true, simulation automatically advances ready orders. When false, scheduler is idle |
 
 ---
 
@@ -317,7 +421,7 @@ Supports comprehensive relational filters, phase matching, active order exclusio
   * `page` (optional integer, min: 1, default: `1`)
   * `limit` (optional integer, min: 1, max: 50, default: `10`)
   * `placa` (optional string, normalized to uppercase, partial match on vehicle plate)
-  * `fase` (optional enum: `"RECIBIDO" | "LAVADO" | "SECADO" | "LISTO"`)
+  * `fase` (optional enum: `"PENDIENTE" | "REMOJO" | "LAVADO" | "SECADO" | "LISTO"`)
   * `bayId` (optional positive integer)
   * `activeOnly` (optional boolean string: `"true"` excludes orders in `LISTO`)
   * `sort` (optional enum: `"newest" | "oldest"`, default: `"newest"`)
@@ -388,19 +492,24 @@ Open [http://localhost:3000/api/docs](http://localhost:3000/api/docs) in your br
        "bayId": 1
      }
      ```
-   * Click **Execute**. The order is created in initial phase `"RECIBIDO"` with `10%` progress. Note the order `id`.
+   * Click **Execute**. The order is created in initial phase `"PENDIENTE"` with `10%` progress and `listoParaLavar: false`. Note the order `id`.
 
-3. **Advance Phase via Demo Controls (`POST /api/orders/{id}/simulate/advance`):**
+3. **Mark Ready to Wash (`POST /api/orders/{id}/ready`):**
+   * Expand `POST /api/orders/{id}/ready` under **Orders** and click **Try it out**.
+   * Enter the order `id` and click **Execute**.
+   * The order is marked ready (`listoParaLavar: true`, `readyAt: timestamp`), and the simulation begins tracking the wash.
+
+4. **Advance Phase via Demo Controls (`POST /api/orders/{id}/simulate/advance`):**
    * Expand `POST /api/orders/{id}/simulate/advance` under the **Simulation** tag and click **Try it out**.
    * Enter the order `id` and click **Execute**.
-   * The order immediately advances to `"LAVADO"` with `45%` progress, resetting the background simulation timer.
+   * The order advances to `"REMOJO"` (`30%`), and subsequent advances move to `"LAVADO"` (`55%`), `"SECADO"` (`80%`), and `"LISTO"` (`100%`).
 
-4. **Upload Photo Evidence (`POST /api/orders/{orderId}/evidence`):**
+5. **Upload Photo Evidence (`POST /api/orders/{orderId}/evidence`):**
    * Expand `POST /api/orders/{orderId}/evidence` under the **Evidence** tag and click **Try it out**.
    * Enter the order `id`, choose an image file (JPEG, PNG, or WEBP under 5 MB) via the file picker, and set `etapa` to `"LAVADO"`.
    * Click **Execute** and verify the `201 Created` response with the static image URL.
 
-5. **Track Vehicle with AI Prediction (`GET /api/orders/track/{placa}`):**
+6. **Track Vehicle with AI Prediction (`GET /api/orders/track/{placa}`):**
    * Expand `GET /api/orders/track/{placa}` under the **Orders** tag and click **Try it out**.
    * Enter plate `"XYZ-123"` and click **Execute**.
    * Inspect the returned payload containing the vehicle, bay, package, current progress, and embedded `prediction`:
@@ -408,7 +517,8 @@ Open [http://localhost:3000/api/docs](http://localhost:3000/api/docs) in your br
      {
        "id": 1,
        "faseActual": "LAVADO",
-       "porcentajeProgreso": 45,
+       "porcentajeProgreso": 55,
+       "listoParaLavar": true,
        "prediction": {
          "estimatedDeliveryTime": "2026-10-23T17:35:00.000Z",
          "accuracyPercentage": 94,
@@ -418,9 +528,9 @@ Open [http://localhost:3000/api/docs](http://localhost:3000/api/docs) in your br
      }
      ```
 
-6. **Complete the Order (`POST /api/orders/{id}/simulate/complete`):**
+7. **Complete the Order (`POST /api/orders/{id}/simulate/complete`):**
    * Expand `POST /api/orders/{id}/simulate/complete` under **Simulation** and click **Execute**.
-   * The order transitions to `"LISTO"` (100% progress). Checking prediction now yields `accuracyPercentage: 100`.
+   * The order transitions to `"LISTO"` (100% progress) and frees the bay. Checking prediction now yields `accuracyPercentage: 100`.
 
 ---
 
@@ -487,7 +597,7 @@ All request inputs (body and route parameters) are validated using schemas built
    * `vehicleId`: Required positive integer (coerced).
    * `packageId`: Optional positive integer (coerced).
    * `bayId`: Optional positive integer (coerced). If the designated bay is already occupied (`ocupada: true`), returns `409 Conflict` with code `"BAY_OCCUPIED"`.
-   * `faseActual`: Validated against canonical phases: `"RECIBIDO" | "LAVADO" | "SECADO" | "LISTO"`.
+   * `faseActual`: Validated against canonical phases: `"PENDIENTE" | "REMOJO" | "LAVADO" | "SECADO" | "LISTO"`.
 
 3. **Common Route Parameters:**
    * `:id` / `:orderId`: Coerced positive integers. Non-numeric or negative values return `400 Bad Request` with code `"VALIDATION_ERROR"`.
@@ -495,7 +605,7 @@ All request inputs (body and route parameters) are validated using schemas built
 
 4. **Evidence Uploads (`POST /api/orders/:orderId/evidence`):**
    * Validates `:orderId` parameter before file processing.
-   * `etapa`: Optional string validated against canonical phases (`RECIBIDO`, `LAVADO`, `SECADO`, `LISTO`).
+   * `etapa`: Optional string validated against canonical phases (`PENDIENTE`, `REMOJO`, `LAVADO`, `SECADO`, `LISTO`).
    * **Orphan File Cleanup:** If Multer persists an uploaded image and subsequent validation fails (such as an invalid `etapa`), the temporary file is immediately removed from disk to avoid orphan artifacts.
 
 ---
@@ -505,7 +615,7 @@ All request inputs (body and route parameters) are validated using schemas built
 Manual override endpoints designed for live presentations and UI testing, allowing operators to force order status changes without waiting for the background simulation timer:
 
 ### 1. Force Advance Phase
-Advances an active order to its next phase (`RECIBIDO -> LAVADO -> SECADO -> LISTO`), recalculating progress percentage and resetting the simulation timer.
+Advances an active order to its next phase (`PENDIENTE -> REMOJO -> LAVADO -> SECADO -> LISTO`), recalculating progress percentage and resetting the simulation timer.
 
 * **Endpoint:** `POST /api/orders/:id/simulate/advance`
 * **Response (Success):** `200 OK` with updated order object.
@@ -521,11 +631,11 @@ curl -X POST http://localhost:3000/api/orders/1/simulate/advance
 ---
 
 ### 2. Reset Order to Start
-Resets an order back to `faseActual: "RECIBIDO"` and `porcentajeProgreso: 10`, resetting the simulation timer to zero.
+Resets an order back to `faseActual: "PENDIENTE"` and `porcentajeProgreso: 10`, re-occupying the bay if free, and resetting the simulation timer to zero.
 
 * **Endpoint:** `POST /api/orders/:id/simulate/reset`
 * **Response:** `200 OK` with updated order object.
-* **Console Log:** `[DEMO] Order #<id> reset to RECIBIDO`
+* **Console Log:** `[DEMO] Order #<id> reset to PENDIENTE`
 
 **Example cURL:**
 ```bash
@@ -632,10 +742,10 @@ curl http://localhost:3000/api/orders/track/ABC-123
 ---
 
 ### Prediction Engine Rules:
-* **Remaining Time Calculation:** `(remaining phases count) * SIMULATION_PHASE_DURATION_MS`. Reuses canonical sequence `RECIBIDO (3) -> LAVADO (2) -> SECADO (1) -> LISTO (0)`.
+* **Remaining Time Calculation:** `(remaining phases count) * SIMULATION_PHASE_DURATION_MS`. Reuses canonical sequence `PENDIENTE (4) -> REMOJO (3) -> LAVADO (2) -> SECADO (1) -> LISTO (0)`.
 * **Deterministic Accuracy Percentage:** Pseudo-random value between `88` and `97` seeded by the order's ID. Consistent across repeated calls for the same order.
 * **Completion Handling:** When `faseActual === "LISTO"`, `estimatedDeliveryTime` returns actual finish time (`updatedAt`), `accuracyPercentage` is `100`, `recalculated` is `false`, and `message` is `null`.
-* **Delay Detection:** If elapsed time in current phase exceeds `SIMULATION_PHASE_DURATION_MS` and the order is not in `LISTO`, flags `recalculated: true` and `message: "Tiempo recalculado por posible retraso"`.
+* **Delay Detection:** If elapsed time in current phase exceeds `SIMULATION_PHASE_DURATION_MS`, the order is not in `LISTO`, and `listoParaLavar === true`, flags `recalculated: true` and `message: "Tiempo recalculado por posible retraso"`. Orders that are not yet marked ready (`listoParaLavar: false`) are never flagged as delayed.
 
 ---
 
