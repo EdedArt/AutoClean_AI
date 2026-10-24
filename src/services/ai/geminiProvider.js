@@ -2,6 +2,7 @@ const { GoogleGenAI, Type } = require('@google/genai');
 const { z } = require('zod');
 const env = require('../../config/env');
 const { VALID_PHASES } = require('../simulation.service');
+const { derivePhase } = require('./phaseRules');
 
 const observationsSchema = z.object({
   soapFoamVisible: z.boolean(),
@@ -270,7 +271,26 @@ async function analyzeImage({ buffer, mimeType = 'image/jpeg', expectedPlate }) 
         );
       }
 
-      return validationResult.data;
+      const raw = validationResult.data;
+      const derived = derivePhase(raw.observations, raw.phase, raw.phaseConfidence);
+
+      const notesWithReason = raw.notes
+        ? `${raw.notes} [Phase: ${derived.phase} via ${derived.source} - ${derived.reason}]`
+        : `[Phase: ${derived.phase} via ${derived.source} - ${derived.reason}]`;
+
+      return {
+        plateDetected: raw.plateDetected,
+        plateConfidence: raw.plateConfidence,
+        observations: raw.observations,
+        phase: derived.phase,
+        phaseConfidence: derived.confidence,
+        modelPhase: raw.phase,
+        modelPhaseConfidence: raw.phaseConfidence,
+        phaseSource: derived.source,
+        phaseReason: derived.reason,
+        dirtLevel: raw.dirtLevel,
+        notes: notesWithReason,
+      };
     } catch (err) {
       lastError = sanitizeError(err);
       // If it's a quota error, network error or timeout, retrying immediately is unlikely to succeed
