@@ -254,6 +254,18 @@ async function runErrorHandlingTests() {
       console.error = originalConsoleError;
     }
 
+    // 9. AppError helper unit check (forbidden)
+    console.log('\n9. Testing AppError.forbidden helper method...');
+    const forbiddenErr = AppError.forbidden('Custom forbidden message');
+    assert.strictEqual(forbiddenErr.statusCode, 403);
+    assert.strictEqual(forbiddenErr.code, 'FORBIDDEN');
+    assert.strictEqual(forbiddenErr.message, 'Custom forbidden message');
+    assert.strictEqual(forbiddenErr instanceof AppError, true);
+    const defaultForbidden = AppError.forbidden();
+    assert.strictEqual(defaultForbidden.statusCode, 403);
+    assert.strictEqual(defaultForbidden.code, 'FORBIDDEN');
+    console.log('  ✅ AppError.forbidden returns statusCode 403 and code FORBIDDEN.');
+
     console.log('\n🎉 All Centralized Error Handling tests passed successfully!');
   } finally {
     // Cleanup

@@ -28,6 +28,10 @@ class AppError extends Error {
     return new AppError(message, 404, code);
   }
 
+  static forbidden(message = 'Forbidden', code = 'FORBIDDEN') {
+    return new AppError(message, 403, code);
+  }
+
   static conflict(message = 'Conflict', code = 'CONFLICT') {
     return new AppError(message, 409, code);
   }
