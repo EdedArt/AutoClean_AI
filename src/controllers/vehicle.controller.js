@@ -54,14 +54,35 @@ const getVehicleById = asyncHandler(async (req, res) => {
  * Create a new vehicle
  */
 const createVehicle = asyncHandler(async (req, res) => {
-  const { placa, marca, modelo, nivelSuciedad } = req.body;
+  const { placa, marca, modelo, color, ownerName, ownerEmail, nivelSuciedad } = req.body;
+
+  let ownerId = null;
+  if (ownerEmail) {
+    const normalizedEmail = ownerEmail.toLowerCase().trim();
+    const ownerUser = await prisma.user.findUnique({
+      where: { email: normalizedEmail },
+    });
+
+    if (!ownerUser) {
+      throw AppError.notFound('Owner user not found', 'OWNER_NOT_FOUND');
+    }
+
+    if (ownerUser.rol !== 'CLIENTE') {
+      throw AppError.badRequest('Owner user must have CLIENTE role', 'INVALID_OWNER');
+    }
+
+    ownerId = ownerUser.id;
+  }
 
   const newVehicle = await prisma.vehicle.create({
     data: {
       placa,
       marca,
       modelo,
-      nivelSuciedad,
+      color,
+      ownerName,
+      ownerId,
+      nivelSuciedad: nivelSuciedad || null,
     },
   });
 
