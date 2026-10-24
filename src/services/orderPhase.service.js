@@ -37,6 +37,10 @@ const changePhase = async (orderId, newPhase, options = {}) => {
       throw AppError.notFound('Service order not found');
     }
 
+    if (order.deliveredAt) {
+      throw AppError.conflict('Order is already delivered', 'ALREADY_DELIVERED');
+    }
+
     const progreso = PHASE_PROGRESS_MAP[newPhase];
     const isNewPhaseListo = newPhase === 'LISTO';
     const isOldPhaseListo = order.faseActual === 'LISTO';

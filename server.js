@@ -128,6 +128,7 @@ const simulationInterval = setInterval(async () => {
           not: 'LISTO',
         },
         listoParaLavar: true,
+        deliveredAt: null,
       },
     });
 

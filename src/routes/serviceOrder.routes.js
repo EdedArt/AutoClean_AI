@@ -18,6 +18,7 @@ const {
   simulateAdvanceOrder,
   simulateResetOrder,
   simulateCompleteOrder,
+  deliverServiceOrder,
 } = require('../controllers/serviceOrder.controller');
 
 const router = Router();
@@ -30,6 +31,7 @@ router.get('/:id/prediction', authorize('OPERARIO', 'CLIENTE'), validate(idParam
 router.get('/:id/timeline', authorize('OPERARIO', 'CLIENTE'), validate(idParam, 'params'), getOrderTimeline);
 router.post('/', authorize('OPERARIO'), validate(createOrderSchema, 'body'), createServiceOrder);
 router.post('/:id/ready', authorize('OPERARIO'), validate(idParam, 'params'), markOrderReady);
+router.post('/:id/deliver', authorize('OPERARIO'), validate(idParam, 'params'), deliverServiceOrder);
 router.patch(
   '/:id/phase',
   authorize('OPERARIO'),

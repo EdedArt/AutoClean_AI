@@ -1,5 +1,108 @@
 # AutoClean AI — Backend
 
+## Delivery, One Active Order per Plate & Realistic ETA (Phase 23)
+
+Phase 23 introduces order delivery lifecycle management, enforces strict one-active-order concurrency per vehicle license plate, limits tracking to currently active car washes, and provides realistic ETA estimations independent of demo simulation speeds.
+
+---
+
+### 1. Delivery Lifecycle (`POST /api/orders/:id/deliver`)
+
+* **Delivery is NOT a wash phase:** The car wash cycle phases remain strictly `['PENDIENTE', 'REMOJO', 'LAVADO', 'SECADO', 'LISTO']`. Delivery is a separate business milestone stored as `ServiceOrder.deliveredAt`.
+* **Prerequisites:** Only orders in `faseActual = 'LISTO'` can be delivered. Attempting to deliver prior phases returns `409 NOT_FINISHED`.
+* **Role Restriction:** Restricted to staff (`OPERARIO`). Clients (`CLIENTE`) receive `403 FORBIDDEN`.
+* **Bays Untouched:** Wash bays are already freed upon reaching `LISTO`. Delivery does not alter bay occupancy.
+* **Idempotency & Change Locks:** Calling deliver on an already delivered order returns `409 ALREADY_DELIVERED`. Delivered orders cannot be modified: `PATCH /api/orders/:id/phase`, demo controls (`advance`, `reset`, `complete`), and AI `/analyze` all reject delivered orders with `409 ALREADY_DELIVERED`.
+* **Timeline Delivery Event:** Calling `GET /api/orders/:id/timeline` appends a delivery entry `{ type: "DELIVERED", at: "..." }` without creating a DB PhaseEvent row, preserving backwards compatibility.
+
+#### Delivering an Order:
+```bash
+curl -X POST http://localhost:3000/api/orders/1/deliver \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+---
+
+### 2. One Active Order per License Plate
+
+* **Active Order Definition:** An order is considered **active** as long as `deliveredAt` is `null` (a car in `LISTO` waiting for customer pickup is still active).
+* **Strict Concurrency Rule:** A vehicle can have only **ONE active order at any given time**.
+* **Rejection:** Calling `POST /api/orders` for a vehicle with an active order returns `409 Conflict` with code `ACTIVE_ORDER_EXISTS`:
+  ```json
+  {
+    "error": {
+      "code": "ACTIVE_ORDER_EXISTS",
+      "message": "Vehicle already has an active service order",
+      "details": {
+        "orderId": 42,
+        "faseActual": "LAVADO"
+      }
+    }
+  }
+  ```
+* **Re-ordering:** Once the active order is delivered (`POST /api/orders/:id/deliver`), creating a new order for that plate is immediately permitted.
+
+---
+
+### 3. Active Vehicle Tracking (`GET /api/orders/track/:placa`)
+
+* **Active-Only Lookup:** Tracking a plate only considers orders where `deliveredAt` is `null`.
+* **Uniform Privacy-Preserving 404:** If no active order exists (never registered, already delivered, or owned by a different `CLIENTE`), the API returns the exact identical 404 response:
+  ```json
+  {
+    "error": {
+      "code": "NOT_FOUND",
+      "message": "No hay un carro lavándose con esta placa"
+    }
+  }
+  ```
+
+#### Tracking an Active Plate:
+```bash
+curl -X GET http://localhost:3000/api/orders/track/XYZ-123 \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+---
+
+### 4. Orders Active Query Filter (`GET /api/orders?active=true|false`)
+
+The orders list endpoint supports an optional `active` boolean query parameter:
+* `GET /api/orders?active=true`: Returns only active orders (`deliveredAt` is null).
+* `GET /api/orders?active=false`: Returns only delivered orders (`deliveredAt` is not null).
+* Omitted: Returns all orders (preserving standard pagination and filtering).
+
+```bash
+curl -X GET "http://localhost:3000/api/orders?active=true&page=1&limit=10" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+---
+
+### 5. Realistic ETA (Independent of Simulation Duration)
+
+Clients receive realistic time-to-completion estimations based on real-world car wash phase durations rather than the demo acceleration timer (`SIMULATION_PHASE_DURATION_MS`).
+
+* **Default Phase Durations:**
+  * `PENDIENTE`: 10 minutes
+  * `REMOJO`: 5 minutes
+  * `LAVADO`: 15 minutes
+  * `SECADO`: 10 minutes
+  * `LISTO`: 0 minutes
+  * `QUEUE_WAIT_PER_ORDER_MINUTES`: 15 minutes
+* **Optional Environment Override:** Set `PHASE_ETA_MINUTES` as JSON in `.env` (validated with safe fallback to defaults at startup).
+* **Calculation:**
+  * Remaining = Sum of phase minutes from current phase onward minus minutes already elapsed in the current phase (referenced against latest phase transition).
+  * Clamped: Never below 1 minute unless in `LISTO` (which returns 0).
+  * Queue Wait: If an order is `PENDIENTE` and unready (`listoParaLavar: false`), 15 minutes are added for each earlier active order not yet in `LISTO` (capped at 120 minutes).
+* **Response Fields Exposed in `GET /api/orders` & `GET /api/orders/track/:placa`:**
+  * `etaMinutes` (integer): Remaining minutes (0 when `LISTO`).
+  * `etaLabel` (string): `"Listo para entregar"`, `"Pendiente, aprox. 1 h 30 min"`, or `"Aprox. 25 min"` (formatted under 60 min as `"X min"`, 60+ as `"X h Y min"`, exact hours as `"X h"`).
+  * `estimatedReadyAt` (ISO 8601 string or `null` when `LISTO`).
+  * `deliveredAt` (ISO 8601 string or `null`).
+
+---
+
 ## Gemini Vision & Phase Detection (Phase 22)
 
 Phase 22 integrates multimodal computer vision using Google Gen AI (`@google/genai`) to automate bay operations. Camera frames of vehicles in wash bays are analyzed to read Colombian license plates (`XXX-123`) and classify the current wash phase (`PENDIENTE`, `REMOJO`, `LAVADO`, `SECADO`, `LISTO`). When the detected plate matches the order's vehicle, the phase advances automatically via `changePhase(orderId, phase, { source: "AI" })`.
@@ -719,15 +822,27 @@ The API enforces a single, uniform JSON error format across all endpoints (valid
 |---|---|---|
 | `ROUTE_NOT_FOUND` | `404 Not Found` | Request sent to an unregistered route or HTTP method |
 | `NOT_FOUND` | `404 Not Found` | Requested vehicle, service order, bay, or package was not found |
+| `OWNER_NOT_FOUND` | `404 Not Found` | Owner user not found by email when assigning vehicle ownership |
 | `VALIDATION_ERROR` | `400 Bad Request` | Zod schema validation failed on body, params, or query |
 | `INVALID_JSON` | `400 Bad Request` | Malformed JSON payload sent in request body |
 | `INVALID_REFERENCE` | `400 Bad Request` | Prisma foreign key reference failure |
+| `INVALID_OWNER` | `400 Bad Request` | User specified as vehicle owner does not have CLIENTE role |
 | `ORDER_COMPLETED` | `400 Bad Request` | Attempted to force-advance an order that is already completed (`LISTO`) |
 | `FILE_MISSING` | `400 Bad Request` | Evidence upload endpoint called without an image file |
 | `INVALID_FILE_TYPE` | `400 Bad Request` | Uploaded file is not JPEG, PNG, or WEBP |
 | `FILE_TOO_LARGE` | `413 Payload Too Large` | Uploaded file exceeds the 5 MB maximum size limit |
+| `PAYLOAD_TOO_LARGE` | `413 Payload Too Large` | Request JSON body exceeds 100 KB limit |
 | `DUPLICATE_RESOURCE` | `409 Conflict` | Unique constraint violation (e.g. vehicle plate already exists) |
 | `BAY_OCCUPIED` | `409 Conflict` | Attempted to create a service order on an already occupied bay |
+| `ACTIVE_ORDER_EXISTS` | `409 Conflict` | Vehicle already has an active (undelivered) service order |
+| `NOT_FINISHED` | `409 Conflict` | Order cannot be delivered until it reaches `LISTO` phase |
+| `ALREADY_DELIVERED` | `409 Conflict` | Order is already delivered; modifications blocked |
+| `ALREADY_READY` | `409 Conflict` | Order is already marked as ready to wash |
+| `INVALID_STATE` | `409 Conflict` | Order must be in `PENDIENTE` phase to mark ready to wash |
+| `NOT_READY` | `409 Conflict` | Order is not marked ready to wash before attempting wash advance |
+| `WRONG_VEHICLE` | `409 Conflict` | License plate detected in image does not match order's vehicle |
+| `PLATE_UNREADABLE` | `422 Unprocessable Entity` | License plate in photo cannot be recognized with sufficient confidence |
+| `RATE_LIMITED` | `429 Too Many Requests` | Global or endpoint rate limit exceeded |
 | `INTERNAL_ERROR` | `500 Internal Server Error` | Unexpected unhandled server exception |
 
 ### Production vs Development Behavior

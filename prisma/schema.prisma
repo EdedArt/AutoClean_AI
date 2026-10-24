@@ -50,6 +50,7 @@ model ServiceOrder {
   listoParaLavar      Boolean      @default(false)
   readyAt             DateTime?
   horaEstimadaEntrega DateTime?
+  deliveredAt         DateTime?
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
   evidences           Evidence[]

@@ -85,6 +85,7 @@ async function runErrorHandlingTests() {
 
   let testVehicle;
   let testOrder;
+  let bayTestVehicle;
 
   try {
     // Setup test vehicle and order for tests
@@ -191,8 +192,16 @@ async function runErrorHandlingTests() {
     if (!occupiedBay) {
       occupiedBay = await prisma.bay.create({ data: { numero: 988, ocupada: true } });
     }
+    const bayPlate = `BAY-${Math.floor(100 + Math.random() * 900)}`;
+    bayTestVehicle = await prisma.vehicle.create({
+      data: {
+        placa: bayPlate,
+        marca: 'BayTest',
+        modelo: 'Tester',
+      },
+    });
     const bayOccRes = await makeRequest('POST', '/api/orders', {
-      vehicleId: testVehicle.id,
+      vehicleId: bayTestVehicle.id,
       bayId: occupiedBay.id,
     });
     assert.strictEqual(bayOccRes.status, 409);
@@ -252,6 +261,9 @@ async function runErrorHandlingTests() {
       await prisma.phaseEvent.deleteMany({ where: { order: { vehicleId: testVehicle.id } } });
       await prisma.serviceOrder.deleteMany({ where: { vehicleId: testVehicle.id } });
       await prisma.vehicle.delete({ where: { id: testVehicle.id } });
+    }
+    if (bayTestVehicle) {
+      await prisma.vehicle.delete({ where: { id: bayTestVehicle.id } }).catch(() => {});
     }
     server.close();
     await prisma.$disconnect();

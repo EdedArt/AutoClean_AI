@@ -6,6 +6,7 @@ const { changePhase } = require('../services/orderPhase.service');
 const { calculateDeliveryPrediction } = require('../services/prediction.service');
 const { getPrismaPagination, buildPaginatedResponse } = require('../utils/pagination');
 const { getOrderOwnershipFilter, checkOrderAccess } = require('../utils/ownership');
+const { enrichOrderWithEta } = require('../services/eta.service');
 
 /**
  * Fetch all service orders with nested vehicle, package, and bay data
@@ -19,6 +20,7 @@ const getServiceOrders = asyncHandler(async (req, res) => {
     fase,
     bayId,
     activeOnly,
+    active,
     sort = 'newest',
   } = req.query || {};
 
@@ -49,7 +51,11 @@ const getServiceOrders = asyncHandler(async (req, res) => {
     });
   }
 
-  if (activeOnly) {
+  if (typeof active === 'boolean') {
+    andConditions.push({
+      deliveredAt: active ? null : { not: null },
+    });
+  } else if (activeOnly) {
     andConditions.push({
       faseActual: { not: 'LISTO' },
     });
@@ -74,7 +80,12 @@ const getServiceOrders = asyncHandler(async (req, res) => {
     prisma.serviceOrder.count({ where }),
   ]);
 
-  res.status(200).json(buildPaginatedResponse(orders, total, page, limit));
+  const now = new Date();
+  const enrichedOrders = await Promise.all(
+    orders.map((order) => enrichOrderWithEta(order, { now }))
+  );
+
+  res.status(200).json(buildPaginatedResponse(enrichedOrders, total, page, limit));
 });
 
 /**
@@ -90,6 +101,22 @@ const createServiceOrder = asyncHandler(async (req, res) => {
     });
     if (!vehicleExists) {
       throw AppError.notFound('Vehicle not found');
+    }
+
+    // Check if vehicle already has an active order
+    const activeOrder = await tx.serviceOrder.findFirst({
+      where: {
+        vehicleId,
+        deliveredAt: null,
+      },
+    });
+    if (activeOrder) {
+      throw new AppError(
+        'Vehicle already has an active service order',
+        409,
+        'ACTIVE_ORDER_EXISTS',
+        { orderId: activeOrder.id, faseActual: activeOrder.faseActual }
+      );
     }
 
     // Verify package exists if provided
@@ -199,6 +226,7 @@ const trackOrderByPlaca = asyncHandler(async (req, res) => {
       vehicle: {
         placa,
       },
+      deliveredAt: null,
     },
     orderBy: {
       createdAt: 'desc',
@@ -211,15 +239,16 @@ const trackOrderByPlaca = asyncHandler(async (req, res) => {
   });
 
   if (!order) {
-    throw AppError.notFound('No se encontraron órdenes activas para esta placa');
+    throw AppError.notFound('No hay un carro lavándose con esta placa');
   }
 
-  checkOrderAccess(order, req.user, 'No se encontraron órdenes activas para esta placa');
+  checkOrderAccess(order, req.user, 'No hay un carro lavándose con esta placa');
 
   const prediction = calculateDeliveryPrediction(order);
+  const enrichedOrder = await enrichOrderWithEta(order);
 
   res.status(200).json({
-    ...order,
+    ...enrichedOrder,
     prediction,
   });
 });
@@ -236,6 +265,10 @@ const simulateAdvanceOrder = asyncHandler(async (req, res) => {
 
   if (!order) {
     throw AppError.notFound('Service order not found');
+  }
+
+  if (order.deliveredAt) {
+    throw AppError.conflict('Order is already delivered', 'ALREADY_DELIVERED');
   }
 
   if (order.faseActual === 'LISTO') {
@@ -296,6 +329,10 @@ const markOrderReady = asyncHandler(async (req, res) => {
     throw AppError.notFound('Service order not found');
   }
 
+  if (order.deliveredAt) {
+    throw AppError.conflict('Order is already delivered', 'ALREADY_DELIVERED');
+  }
+
   if (order.faseActual !== 'PENDIENTE') {
     throw AppError.conflict('Order must be in PENDIENTE phase to mark as ready', 'INVALID_STATE');
   }
@@ -321,6 +358,52 @@ const markOrderReady = asyncHandler(async (req, res) => {
 
   console.log(`[READY] Order #${id} is now ready to wash`);
   res.status(200).json(updatedOrder);
+});
+
+/**
+ * Deliver a service order (OPERARIO only)
+ * Sets deliveredAt = now if order is in LISTO phase and not already delivered.
+ */
+const deliverServiceOrder = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const orderId = Number(id);
+
+  const order = await prisma.serviceOrder.findUnique({
+    where: { id: orderId },
+    include: {
+      vehicle: true,
+      package: true,
+      bay: true,
+    },
+  });
+
+  if (!order) {
+    throw AppError.notFound('Service order not found');
+  }
+
+  if (order.deliveredAt) {
+    throw AppError.conflict('Order is already delivered', 'ALREADY_DELIVERED');
+  }
+
+  if (order.faseActual !== 'LISTO') {
+    throw AppError.conflict('Order cannot be delivered until it reaches LISTO phase', 'NOT_FINISHED');
+  }
+
+  const now = new Date();
+  const deliveredOrder = await prisma.serviceOrder.update({
+    where: { id: orderId },
+    data: {
+      deliveredAt: now,
+      updatedAt: now,
+    },
+    include: {
+      vehicle: true,
+      package: true,
+      bay: true,
+    },
+  });
+
+  res.status(200).json(deliveredOrder);
 });
 
 /**
@@ -358,6 +441,13 @@ const getOrderTimeline = asyncHandler(async (req, res) => {
     createdAt: event.createdAt,
   }));
 
+  if (order.deliveredAt) {
+    timeline.push({
+      type: 'DELIVERED',
+      at: order.deliveredAt,
+    });
+  }
+
   res.status(200).json(timeline);
 });
 
@@ -372,4 +462,5 @@ module.exports = {
   simulateAdvanceOrder,
   simulateResetOrder,
   simulateCompleteOrder,
+  deliverServiceOrder,
 };

@@ -56,6 +56,11 @@ const analyzeOrderImage = asyncHandler(async (req, res) => {
     throw AppError.notFound('Service order not found');
   }
 
+  if (order.deliveredAt) {
+    safeUnlink(req.file.path);
+    throw AppError.conflict('Order is already delivered', 'ALREADY_DELIVERED');
+  }
+
   if (!order.listoParaLavar) {
     safeUnlink(req.file.path);
     throw AppError.conflict('Order is not ready to wash yet', 'NOT_READY');

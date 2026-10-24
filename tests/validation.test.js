@@ -204,8 +204,18 @@ async function runValidationTests() {
         data: { numero: 999, ocupada: true },
       });
     }
+    const bayVehicleRes = await makeRequest('POST', '/api/vehicles', {
+      placa: 'BAY-123',
+      marca: 'Toyota',
+      modelo: 'Corolla',
+      color: 'Gris',
+      ownerName: 'Bay Test Owner',
+    });
+    assert.strictEqual(bayVehicleRes.status, 201);
+    createdVehicleIds.push(bayVehicleRes.body.id);
+
     const occupiedBayRes = await makeRequest('POST', '/api/orders', {
-      vehicleId: normRes.body.id,
+      vehicleId: bayVehicleRes.body.id,
       bayId: occupiedBay.id,
     });
     assert.strictEqual(occupiedBayRes.status, 409);

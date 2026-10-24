@@ -61,6 +61,12 @@ const orderQuery = pagination.extend({
     if (val === '' || val === undefined || val === null) return undefined;
     return val;
   }, z.boolean({ invalid_type_error: 'Field "activeOnly" must be a boolean' }).optional()),
+  active: z.preprocess((val) => {
+    if (val === 'true' || val === true || val === '1' || val === 1) return true;
+    if (val === 'false' || val === false || val === '0' || val === 0) return false;
+    if (val === '' || val === undefined || val === null) return undefined;
+    return val;
+  }, z.boolean({ invalid_type_error: 'Field "active" must be a boolean' }).optional()),
   sort: z.preprocess(
     (val) => (val === '' || val === undefined || val === null ? undefined : val),
     z
