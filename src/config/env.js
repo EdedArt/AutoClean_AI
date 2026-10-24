@@ -20,6 +20,13 @@ const envSchema = z.object({
     .int()
     .positive()
     .default(60000),
+  SIMULATION_AUTO_ADVANCE: z
+    .union([z.boolean(), z.string()])
+    .default(true)
+    .transform((val) => {
+      if (typeof val === 'boolean') return val;
+      return val.toLowerCase() === 'true' || val === '1';
+    }),
   CORS_ORIGINS: z
     .string()
     .default('*'),
@@ -103,6 +110,12 @@ const env = {
   },
   get JWT_EXPIRES_IN() {
     return process.env.JWT_EXPIRES_IN || parsed.JWT_EXPIRES_IN;
+  },
+  get SIMULATION_AUTO_ADVANCE() {
+    if (process.env.SIMULATION_AUTO_ADVANCE !== undefined) {
+      return String(process.env.SIMULATION_AUTO_ADVANCE).toLowerCase() === 'true' || process.env.SIMULATION_AUTO_ADVANCE === '1';
+    }
+    return parsed.SIMULATION_AUTO_ADVANCE;
   },
   validateEnv,
   envSchema,

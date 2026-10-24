@@ -1,7 +1,8 @@
 const prisma = require('../config/db');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
-const { getNextPhase, PHASE_PROGRESS_MAP } = require('../services/simulation.service');
+const { getNextPhase, PHASE_PROGRESS_MAP, PHASE_LABELS } = require('../services/simulation.service');
+const { changePhase } = require('../services/orderPhase.service');
 const { calculateDeliveryPrediction } = require('../services/prediction.service');
 const { getPrismaPagination, buildPaginatedResponse } = require('../utils/pagination');
 const { getOrderOwnershipFilter, checkOrderAccess } = require('../utils/ownership');
@@ -82,48 +83,68 @@ const getServiceOrders = asyncHandler(async (req, res) => {
 const createServiceOrder = asyncHandler(async (req, res) => {
   const { vehicleId, packageId, bayId } = req.body;
 
-  // Verify vehicle exists
-  const vehicleExists = await prisma.vehicle.findUnique({
-    where: { id: vehicleId },
-  });
-  if (!vehicleExists) {
-    throw AppError.notFound('Vehicle not found');
-  }
-
-  // Verify package exists if provided
-  if (packageId) {
-    const packageExists = await prisma.package.findUnique({
-      where: { id: packageId },
+  const newOrder = await prisma.$transaction(async (tx) => {
+    // Verify vehicle exists
+    const vehicleExists = await tx.vehicle.findUnique({
+      where: { id: vehicleId },
     });
-    if (!packageExists) {
-      throw AppError.notFound('Package not found');
+    if (!vehicleExists) {
+      throw AppError.notFound('Vehicle not found');
     }
-  }
 
-  // Verify bay exists and check occupancy if provided
-  if (bayId) {
-    const bay = await prisma.bay.findUnique({
-      where: { id: bayId },
+    // Verify package exists if provided
+    if (packageId) {
+      const packageExists = await tx.package.findUnique({
+        where: { id: packageId },
+      });
+      if (!packageExists) {
+        throw AppError.notFound('Package not found');
+      }
+    }
+
+    // Verify bay exists and check occupancy if provided
+    if (bayId) {
+      const bay = await tx.bay.findUnique({
+        where: { id: bayId },
+      });
+      if (!bay) {
+        throw AppError.notFound('Bay not found');
+      }
+      if (bay.ocupada) {
+        throw AppError.conflict('Bay is already occupied', 'BAY_OCCUPIED');
+      }
+      await tx.bay.update({
+        where: { id: bayId },
+        data: { ocupada: true },
+      });
+    }
+
+    const order = await tx.serviceOrder.create({
+      data: {
+        vehicleId,
+        packageId: packageId || null,
+        bayId: bayId || null,
+        faseActual: 'PENDIENTE',
+        porcentajeProgreso: 10,
+        listoParaLavar: false,
+      },
+      include: {
+        vehicle: true,
+        package: true,
+        bay: true,
+      },
     });
-    if (!bay) {
-      throw AppError.notFound('Bay not found');
-    }
-    if (bay.ocupada) {
-      throw AppError.conflict('Bay is already occupied', 'BAY_OCCUPIED');
-    }
-  }
 
-  const newOrder = await prisma.serviceOrder.create({
-    data: {
-      vehicleId,
-      packageId: packageId || null,
-      bayId: bayId || null,
-    },
-    include: {
-      vehicle: true,
-      package: true,
-      bay: true,
-    },
+    await tx.phaseEvent.create({
+      data: {
+        orderId: order.id,
+        fase: 'PENDIENTE',
+        progreso: 10,
+        source: 'MANUAL',
+      },
+    });
+
+    return order;
   });
 
   res.status(201).json(newOrder);
@@ -136,27 +157,7 @@ const updateServicePhase = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { faseActual } = req.body;
 
-  const existingOrder = await prisma.serviceOrder.findUnique({
-    where: { id },
-  });
-  if (!existingOrder) {
-    throw AppError.notFound('Service order not found');
-  }
-
-  const porcentajeProgreso = PHASE_PROGRESS_MAP[faseActual];
-
-  const updatedOrder = await prisma.serviceOrder.update({
-    where: { id },
-    data: {
-      faseActual,
-      porcentajeProgreso,
-    },
-    include: {
-      vehicle: true,
-      package: true,
-      bay: true,
-    },
-  });
+  const updatedOrder = await changePhase(id, faseActual, { source: 'MANUAL' });
 
   res.status(200).json(updatedOrder);
 });
@@ -230,7 +231,7 @@ const simulateAdvanceOrder = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   const order = await prisma.serviceOrder.findUnique({
-    where: { id },
+    where: { id: Number(id) },
   });
 
   if (!order) {
@@ -250,55 +251,21 @@ const simulateAdvanceOrder = asyncHandler(async (req, res) => {
     throw AppError.badRequest('Order is already completed.', 'ORDER_COMPLETED');
   }
 
-  const nextProgress = PHASE_PROGRESS_MAP[nextPhase];
-
-  const updatedOrder = await prisma.serviceOrder.update({
-    where: { id },
-    data: {
-      faseActual: nextPhase,
-      porcentajeProgreso: nextProgress,
-      updatedAt: new Date(),
-    },
-    include: {
-      vehicle: true,
-      package: true,
-      bay: true,
-    },
-  });
+  const updatedOrder = await changePhase(id, nextPhase, { source: 'DEMO' });
 
   console.log(`[DEMO] Order #${id} force-advanced ${currentPhase} -> ${nextPhase}`);
   res.status(200).json(updatedOrder);
 });
 
 /**
- * Demo Control: Reset an order back to RECIBIDO (10%) and restart simulation timer
+ * Demo Control: Reset an order back to PENDIENTE (10%) and restart simulation timer
  */
 const simulateResetOrder = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
-  const order = await prisma.serviceOrder.findUnique({
-    where: { id },
-  });
+  const updatedOrder = await changePhase(id, 'PENDIENTE', { source: 'DEMO' });
 
-  if (!order) {
-    throw AppError.notFound('Service order not found');
-  }
-
-  const updatedOrder = await prisma.serviceOrder.update({
-    where: { id },
-    data: {
-      faseActual: 'RECIBIDO',
-      porcentajeProgreso: 10,
-      updatedAt: new Date(),
-    },
-    include: {
-      vehicle: true,
-      package: true,
-      bay: true,
-    },
-  });
-
-  console.log(`[DEMO] Order #${id} reset to RECIBIDO`);
+  console.log(`[DEMO] Order #${id} reset to PENDIENTE`);
   res.status(200).json(updatedOrder);
 });
 
@@ -308,20 +275,42 @@ const simulateResetOrder = asyncHandler(async (req, res) => {
 const simulateCompleteOrder = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
+  const updatedOrder = await changePhase(id, 'LISTO', { source: 'DEMO' });
+
+  console.log(`[DEMO] Order #${id} force-completed`);
+  res.status(200).json(updatedOrder);
+});
+
+/**
+ * Mark a service order as ready to wash (OPERARIO only)
+ */
+const markOrderReady = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const orderId = Number(id);
+
   const order = await prisma.serviceOrder.findUnique({
-    where: { id },
+    where: { id: orderId },
   });
 
   if (!order) {
     throw AppError.notFound('Service order not found');
   }
 
+  if (order.faseActual !== 'PENDIENTE') {
+    throw AppError.conflict('Order must be in PENDIENTE phase to mark as ready', 'INVALID_STATE');
+  }
+
+  if (order.listoParaLavar) {
+    throw AppError.conflict('Order is already marked as ready to wash', 'ALREADY_READY');
+  }
+
+  const now = new Date();
   const updatedOrder = await prisma.serviceOrder.update({
-    where: { id },
+    where: { id: orderId },
     data: {
-      faseActual: 'LISTO',
-      porcentajeProgreso: 100,
-      updatedAt: new Date(),
+      listoParaLavar: true,
+      readyAt: now,
+      updatedAt: now,
     },
     include: {
       vehicle: true,
@@ -330,14 +319,54 @@ const simulateCompleteOrder = asyncHandler(async (req, res) => {
     },
   });
 
-  console.log(`[DEMO] Order #${id} force-completed`);
+  console.log(`[READY] Order #${id} is now ready to wash`);
   res.status(200).json(updatedOrder);
+});
+
+/**
+ * Get timeline events of a service order
+ */
+const getOrderTimeline = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const orderId = Number(id);
+
+  const order = await prisma.serviceOrder.findUnique({
+    where: { id: orderId },
+    include: {
+      vehicle: true,
+    },
+  });
+
+  if (!order) {
+    throw AppError.notFound('Service order not found');
+  }
+
+  checkOrderAccess(order, req.user);
+
+  const events = await prisma.phaseEvent.findMany({
+    where: { orderId },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  const timeline = events.map((event) => ({
+    id: event.id,
+    orderId: event.orderId,
+    fase: event.fase,
+    label: PHASE_LABELS[event.fase] || event.fase,
+    progreso: event.progreso,
+    source: event.source,
+    createdAt: event.createdAt,
+  }));
+
+  res.status(200).json(timeline);
 });
 
 module.exports = {
   getServiceOrders,
   createServiceOrder,
   updateServicePhase,
+  markOrderReady,
+  getOrderTimeline,
   trackOrderByPlaca,
   getOrderPrediction,
   simulateAdvanceOrder,

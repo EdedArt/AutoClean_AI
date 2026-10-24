@@ -8,6 +8,7 @@ async function main() {
 
   // 1. Clear existing data in relational order to prevent FK constraints issues
   await prisma.evidence.deleteMany();
+  await prisma.phaseEvent.deleteMany();
   await prisma.serviceOrder.deleteMany();
   await prisma.vehicle.deleteMany();
   await prisma.package.deleteMany();
@@ -47,15 +48,15 @@ async function main() {
     },
   });
 
-  // 3. Create 4 Bays
+  // 3. Create 4 Bays with status matching real active orders
   const bay1 = await prisma.bay.create({
     data: { numero: 1, ocupada: true },
   });
   const bay2 = await prisma.bay.create({
     data: { numero: 2, ocupada: true },
   });
-  await prisma.bay.create({
-    data: { numero: 3, ocupada: false },
+  const bay3 = await prisma.bay.create({
+    data: { numero: 3, ocupada: true },
   });
   await prisma.bay.create({
     data: { numero: 4, ocupada: false },
@@ -135,7 +136,7 @@ async function main() {
     },
   });
 
-  const vehicle6 = await prisma.vehicle.create({
+  await prisma.vehicle.create({
     data: {
       placa: 'MNO-345',
       marca: 'Kia',
@@ -146,7 +147,7 @@ async function main() {
     },
   });
 
-  const vehicle7 = await prisma.vehicle.create({
+  await prisma.vehicle.create({
     data: {
       placa: 'PQR-678',
       marca: 'Ford',
@@ -157,7 +158,7 @@ async function main() {
     },
   });
 
-  const vehicle8 = await prisma.vehicle.create({
+  await prisma.vehicle.create({
     data: {
       placa: 'STU-901',
       marca: 'Volkswagen',
@@ -168,54 +169,108 @@ async function main() {
     },
   });
 
-  // 6. Create Service Orders across different phases (RECIBIDO, LAVADO, SECADO, LISTO)
-  await prisma.serviceOrder.create({
+  // 6. Create Service Orders covering all new phases (PENDIENTE, REMOJO, LAVADO, SECADO, LISTO)
+  // Order 1: LAVADO (55%), in bay 1
+  const order1 = await prisma.serviceOrder.create({
     data: {
       vehicleId: vehicle1.id,
       packageId: pkgProfundo.id,
       bayId: bay1.id,
       faseActual: 'LAVADO',
-      porcentajeProgreso: 45,
+      porcentajeProgreso: 55,
+      listoParaLavar: true,
+      readyAt: new Date(Date.now() - 15 * 60 * 1000),
     },
   });
+  await prisma.phaseEvent.createMany({
+    data: [
+      { orderId: order1.id, fase: 'PENDIENTE', progreso: 10, source: 'MANUAL', createdAt: new Date(Date.now() - 20 * 60 * 1000) },
+      { orderId: order1.id, fase: 'REMOJO', progreso: 30, source: 'SIMULATION', createdAt: new Date(Date.now() - 10 * 60 * 1000) },
+      { orderId: order1.id, fase: 'LAVADO', progreso: 55, source: 'SIMULATION', createdAt: new Date(Date.now() - 2 * 60 * 1000) },
+    ],
+  });
 
-  await prisma.serviceOrder.create({
+  // Order 2: SECADO (80%), in bay 2
+  const order2 = await prisma.serviceOrder.create({
     data: {
       vehicleId: vehicle2.id,
       packageId: pkgBasico.id,
       bayId: bay2.id,
       faseActual: 'SECADO',
       porcentajeProgreso: 80,
+      listoParaLavar: true,
+      readyAt: new Date(Date.now() - 25 * 60 * 1000),
     },
   });
+  await prisma.phaseEvent.createMany({
+    data: [
+      { orderId: order2.id, fase: 'PENDIENTE', progreso: 10, source: 'MANUAL', createdAt: new Date(Date.now() - 30 * 60 * 1000) },
+      { orderId: order2.id, fase: 'REMOJO', progreso: 30, source: 'SIMULATION', createdAt: new Date(Date.now() - 20 * 60 * 1000) },
+      { orderId: order2.id, fase: 'LAVADO', progreso: 55, source: 'SIMULATION', createdAt: new Date(Date.now() - 10 * 60 * 1000) },
+      { orderId: order2.id, fase: 'SECADO', progreso: 80, source: 'SIMULATION', createdAt: new Date(Date.now() - 1 * 60 * 1000) },
+    ],
+  });
 
-  await prisma.serviceOrder.create({
+  // Order 3: REMOJO (30%), in bay 3
+  const order3 = await prisma.serviceOrder.create({
     data: {
       vehicleId: vehicle3.id,
       packageId: pkgBasico.id,
-      bayId: null,
-      faseActual: 'RECIBIDO',
-      porcentajeProgreso: 10,
+      bayId: bay3.id,
+      faseActual: 'REMOJO',
+      porcentajeProgreso: 30,
+      listoParaLavar: true,
+      readyAt: new Date(Date.now() - 5 * 60 * 1000),
     },
   });
+  await prisma.phaseEvent.createMany({
+    data: [
+      { orderId: order3.id, fase: 'PENDIENTE', progreso: 10, source: 'MANUAL', createdAt: new Date(Date.now() - 8 * 60 * 1000) },
+      { orderId: order3.id, fase: 'REMOJO', progreso: 30, source: 'SIMULATION', createdAt: new Date(Date.now() - 2 * 60 * 1000) },
+    ],
+  });
 
-  await prisma.serviceOrder.create({
+  // Order 4: LISTO (100%), bay released (null)
+  const order4 = await prisma.serviceOrder.create({
     data: {
       vehicleId: vehicle4.id,
       packageId: pkgProfundo.id,
       bayId: null,
       faseActual: 'LISTO',
       porcentajeProgreso: 100,
+      listoParaLavar: true,
+      readyAt: new Date(Date.now() - 40 * 60 * 1000),
     },
   });
+  await prisma.phaseEvent.createMany({
+    data: [
+      { orderId: order4.id, fase: 'PENDIENTE', progreso: 10, source: 'MANUAL', createdAt: new Date(Date.now() - 45 * 60 * 1000) },
+      { orderId: order4.id, fase: 'REMOJO', progreso: 30, source: 'SIMULATION', createdAt: new Date(Date.now() - 35 * 60 * 1000) },
+      { orderId: order4.id, fase: 'LAVADO', progreso: 55, source: 'SIMULATION', createdAt: new Date(Date.now() - 25 * 60 * 1000) },
+      { orderId: order4.id, fase: 'SECADO', progreso: 80, source: 'SIMULATION', createdAt: new Date(Date.now() - 15 * 60 * 1000) },
+      { orderId: order4.id, fase: 'LISTO', progreso: 100, source: 'SIMULATION', createdAt: new Date(Date.now() - 5 * 60 * 1000) },
+    ],
+  });
 
-  await prisma.serviceOrder.create({
+  // Order 5: PENDIENTE (10%), not ready, waiting in queue (bay null)
+  const order5 = await prisma.serviceOrder.create({
     data: {
       vehicleId: vehicle5.id,
       packageId: pkgBasico.id,
       bayId: null,
-      faseActual: 'RECIBIDO',
+      faseActual: 'PENDIENTE',
       porcentajeProgreso: 10,
+      listoParaLavar: false,
+      readyAt: null,
+    },
+  });
+  await prisma.phaseEvent.create({
+    data: {
+      orderId: order5.id,
+      fase: 'PENDIENTE',
+      progreso: 10,
+      source: 'MANUAL',
+      createdAt: new Date(),
     },
   });
 

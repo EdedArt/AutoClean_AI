@@ -36,7 +36,7 @@ model Package {
   serviceOrders ServiceOrder[]
 }
 
-// ServicePhase: RECIBIDO | LAVADO | SECADO | LISTO
+// ServicePhase: PENDIENTE | REMOJO | LAVADO | SECADO | LISTO
 model ServiceOrder {
   id                  Int          @id @default(autoincrement())
   vehicleId           Int
@@ -45,12 +45,27 @@ model ServiceOrder {
   package             Package?     @relation(fields: [packageId], references: [id])
   bayId               Int?
   bay                 Bay?         @relation(fields: [bayId], references: [id])
-  faseActual          String       @default("RECIBIDO")
-  porcentajeProgreso  Int          @default(0)
+  faseActual          String       @default("PENDIENTE")
+  porcentajeProgreso  Int          @default(10)
+  listoParaLavar      Boolean      @default(false)
+  readyAt             DateTime?
   horaEstimadaEntrega DateTime?
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
   evidences           Evidence[]
+  phaseEvents         PhaseEvent[]
+}
+
+model PhaseEvent {
+  id        Int          @id @default(autoincrement())
+  orderId   Int
+  order     ServiceOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  fase      String
+  progreso  Int
+  source    String       // "MANUAL" | "SIMULATION" | "DEMO" | "AI"
+  createdAt DateTime     @default(now())
+
+  @@index([orderId])
 }
 
 model Evidence {

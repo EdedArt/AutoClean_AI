@@ -72,32 +72,40 @@ async function runDemoControlTests() {
   });
   assert.strictEqual(oRes.status, 201);
   const order = oRes.body;
-  assert.strictEqual(order.faseActual, 'RECIBIDO');
-  console.log(`1. Initialized test order #${order.id} in RECIBIDO.`);
+  assert.strictEqual(order.faseActual, 'PENDIENTE');
+  console.log(`1. Initialized test order #${order.id} in PENDIENTE.`);
 
   try {
-    // 2. Test POST /api/orders/:id/simulate/advance (RECIBIDO -> LAVADO)
-    console.log('\n2. Testing POST /api/orders/:id/simulate/advance (RECIBIDO -> LAVADO)...');
+    // 2. Test POST /api/orders/:id/simulate/advance (PENDIENTE -> REMOJO)
+    console.log('\n2. Testing POST /api/orders/:id/simulate/advance (PENDIENTE -> REMOJO)...');
     const adv1 = await makeRequest('POST', `/api/orders/${order.id}/simulate/advance`);
     assert.strictEqual(adv1.status, 200);
-    assert.strictEqual(adv1.body.faseActual, 'LAVADO');
-    assert.strictEqual(adv1.body.porcentajeProgreso, 45);
+    assert.strictEqual(adv1.body.faseActual, 'REMOJO');
+    assert.strictEqual(adv1.body.porcentajeProgreso, 30);
     assert.ok(adv1.body.vehicle);
-    console.log('  ✅ Successfully advanced to LAVADO (45%).');
+    console.log('  ✅ Successfully advanced to REMOJO (30%).');
 
     // Verify tracking reflects change
     const track1 = await makeRequest('GET', `/api/orders/track/${testPlaca}`);
     assert.strictEqual(track1.status, 200);
-    assert.strictEqual(track1.body.faseActual, 'LAVADO');
-    assert.strictEqual(track1.body.porcentajeProgreso, 45);
-    console.log('  ✅ Tracking endpoint immediately reflects LAVADO.');
+    assert.strictEqual(track1.body.faseActual, 'REMOJO');
+    assert.strictEqual(track1.body.porcentajeProgreso, 30);
+    console.log('  ✅ Tracking endpoint immediately reflects REMOJO.');
 
-    // 3. Test advancing LAVADO -> SECADO
-    console.log('\n3. Testing advance LAVADO -> SECADO...');
+    // 3. Test advancing REMOJO -> LAVADO
+    console.log('\n3. Testing advance REMOJO -> LAVADO...');
     const adv2 = await makeRequest('POST', `/api/orders/${order.id}/simulate/advance`);
     assert.strictEqual(adv2.status, 200);
-    assert.strictEqual(adv2.body.faseActual, 'SECADO');
-    assert.strictEqual(adv2.body.porcentajeProgreso, 80);
+    assert.strictEqual(adv2.body.faseActual, 'LAVADO');
+    assert.strictEqual(adv2.body.porcentajeProgreso, 55);
+    console.log('  ✅ Successfully advanced to LAVADO (55%).');
+
+    // 3b. Test advancing LAVADO -> SECADO
+    console.log('\n3b. Testing advance LAVADO -> SECADO...');
+    const adv2b = await makeRequest('POST', `/api/orders/${order.id}/simulate/advance`);
+    assert.strictEqual(adv2b.status, 200);
+    assert.strictEqual(adv2b.body.faseActual, 'SECADO');
+    assert.strictEqual(adv2b.body.porcentajeProgreso, 80);
     console.log('  ✅ Successfully advanced to SECADO (80%).');
 
     // 4. Test advancing SECADO -> LISTO
@@ -120,16 +128,16 @@ async function runDemoControlTests() {
     console.log('\n6. Testing POST /api/orders/:id/simulate/reset...');
     const resetRes = await makeRequest('POST', `/api/orders/${order.id}/simulate/reset`);
     assert.strictEqual(resetRes.status, 200);
-    assert.strictEqual(resetRes.body.faseActual, 'RECIBIDO');
+    assert.strictEqual(resetRes.body.faseActual, 'PENDIENTE');
     assert.strictEqual(resetRes.body.porcentajeProgreso, 10);
-    console.log('  ✅ Order reset to RECIBIDO (10%).');
+    console.log('  ✅ Order reset to PENDIENTE (10%).');
 
     // Verify tracking reflects reset
     const trackReset = await makeRequest('GET', `/api/orders/track/${testPlaca}`);
     assert.strictEqual(trackReset.status, 200);
-    assert.strictEqual(trackReset.body.faseActual, 'RECIBIDO');
+    assert.strictEqual(trackReset.body.faseActual, 'PENDIENTE');
     assert.strictEqual(trackReset.body.porcentajeProgreso, 10);
-    console.log('  ✅ Tracking endpoint immediately reflects RECIBIDO.');
+    console.log('  ✅ Tracking endpoint immediately reflects PENDIENTE.');
 
     // 7. Test POST /api/orders/:id/simulate/complete
     console.log('\n7. Testing POST /api/orders/:id/simulate/complete...');
@@ -177,6 +185,7 @@ async function runDemoControlTests() {
     console.log('\n🎉 All Demo Control Endpoints tests passed successfully!');
   } finally {
     // Cleanup
+    await prisma.phaseEvent.deleteMany({ where: { order: { vehicleId: vehicle.id } } });
     await prisma.serviceOrder.deleteMany({ where: { vehicleId: vehicle.id } });
     await prisma.vehicle.delete({ where: { id: vehicle.id } });
 

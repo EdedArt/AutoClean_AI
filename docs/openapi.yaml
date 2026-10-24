@@ -5,7 +5,7 @@ info:
   description: >-
     REST API for the AutoClean AI smart car wash management system.
     Includes full vehicle lifecycle tracking, bay assignment, simulated car wash phases
-    (RECIBIDO, LAVADO, SECADO, LISTO) with an automated background scheduler,
+    (PENDIENTE, REMOJO, LAVADO, SECADO, LISTO) with an automated background scheduler,
     manual demo controls for presentations, deterministic AI delivery time predictions,
     and photographic evidence upload per service phase.
 servers:
@@ -476,12 +476,93 @@ paths:
         '429':
           $ref: '#/components/responses/RateLimited'
 
+  /api/phases:
+    get:
+      tags:
+        - Orders
+      summary: Get car wash phases catalog
+      description: Returns the list of valid car wash phases with progress percentage, display label, and display order. Authenticated for both OPERARIO and CLIENTE.
+      responses:
+        '200':
+          description: List of wash phases catalog items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PhaseCatalogItem'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/orders/{id}/ready:
+    post:
+      tags:
+        - Orders
+      summary: Mark order as ready to wash
+      description: Marks a PENDIENTE order as ready to wash (listoParaLavar=true, readyAt=now). Restricted to role OPERARIO.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Numeric identifier of the service order
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Service order successfully marked ready to wash
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceOrder'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/orders/{id}/timeline:
+    get:
+      tags:
+        - Orders
+      summary: Get order phase timeline
+      description: >-
+        Returns the chronological sequence of PhaseEvents for a service order. Role visibility: OPERARIO can view any order; CLIENTE receives 404 for orders belonging to other clients.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Numeric identifier of the service order
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Chronological list of phase events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PhaseEvent'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /api/orders/{id}/phase:
     patch:
       tags:
         - Orders
       summary: Update service order phase
-      description: Advances or updates the current phase and automatically updates progress percentage (RECIBIDO=10%, LAVADO=45%, SECADO=80%, LISTO=100%).
+      description: Advances or updates the current phase and automatically updates progress percentage (PENDIENTE=10%, REMOJO=30%, LAVADO=55%, SECADO=80%, LISTO=100%).
       parameters:
         - name: id
           in: path
@@ -591,7 +672,7 @@ paths:
       tags:
         - Simulation
       summary: Force advance order to next phase
-      description: Demo control to immediately force an active order to its next phase (RECIBIDO -> LAVADO -> SECADO -> LISTO), updating progress percentage and resetting the simulation timer.
+      description: Demo control to immediately force an active order to its next phase (PENDIENTE -> REMOJO -> LAVADO -> SECADO -> LISTO), updating progress percentage and resetting the simulation timer.
       parameters:
         - name: id
           in: path
@@ -617,7 +698,7 @@ paths:
       tags:
         - Simulation
       summary: Reset order back to start
-      description: Demo control to reset an order back to RECIBIDO with 10% progress and restart the background simulation timer.
+      description: Demo control to reset an order back to PENDIENTE with 10% progress and restart the background simulation timer.
       parameters:
         - name: id
           in: path
@@ -628,7 +709,7 @@ paths:
             example: 1
       responses:
         '200':
-          description: Order successfully reset to RECIBIDO
+          description: Order successfully reset to PENDIENTE
           content:
             application/json:
               schema:
@@ -835,12 +916,13 @@ components:
     Phase:
       type: string
       enum:
-        - RECIBIDO
+        - PENDIENTE
+        - REMOJO
         - LAVADO
         - SECADO
         - LISTO
       description: Canonical car wash service phases
-      example: LAVADO
+      example: PENDIENTE
 
     Vehicle:
       type: object
@@ -1009,7 +1091,17 @@ components:
           type: integer
           minimum: 0
           maximum: 100
-          example: 45
+          example: 55
+        listoParaLavar:
+          type: boolean
+          example: false
+          description: Whether the vehicle has been marked ready to wash by an operator
+        readyAt:
+          type: string
+          format: date-time
+          nullable: true
+          example: null
+          description: Timestamp when the order was marked ready to wash
         horaEstimadaEntrega:
           type: string
           format: date-time
@@ -1033,6 +1125,60 @@ components:
           allOf:
             - $ref: '#/components/schemas/Bay'
           nullable: true
+
+    PhaseEvent:
+      type: object
+      required:
+        - id
+        - orderId
+        - fase
+        - label
+        - progreso
+        - source
+        - createdAt
+      properties:
+        id:
+          type: integer
+          example: 1
+        orderId:
+          type: integer
+          example: 1
+        fase:
+          $ref: '#/components/schemas/Phase'
+        label:
+          type: string
+          example: Pendiente
+        progreso:
+          type: integer
+          example: 10
+        source:
+          type: string
+          enum: [MANUAL, SIMULATION, DEMO, AI]
+          example: MANUAL
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-10-23T12:00:00.000Z'
+
+    PhaseCatalogItem:
+      type: object
+      required:
+        - code
+        - label
+        - progress
+        - order
+      properties:
+        code:
+          $ref: '#/components/schemas/Phase'
+        label:
+          type: string
+          example: Pendiente
+        progress:
+          type: integer
+          example: 10
+        order:
+          type: integer
+          example: 1
 
     TrackedOrder:
       allOf:
@@ -1321,6 +1467,18 @@ components:
                 error:
                   code: BAY_OCCUPIED
                   message: Bay is already occupied
+            AlreadyReady:
+              summary: Order is already marked as ready
+              value:
+                error:
+                  code: ALREADY_READY
+                  message: Order is already marked as ready to wash
+            InvalidState:
+              summary: Order is not in PENDIENTE state
+              value:
+                error:
+                  code: INVALID_STATE
+                  message: Order must be in PENDIENTE phase to mark as ready
 
     PayloadTooLarge:
       description: Uploaded file or JSON body exceeds maximum allowed size (413)

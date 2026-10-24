@@ -11,6 +11,8 @@ const {
   getServiceOrders,
   createServiceOrder,
   updateServicePhase,
+  markOrderReady,
+  getOrderTimeline,
   trackOrderByPlaca,
   getOrderPrediction,
   simulateAdvanceOrder,
@@ -25,7 +27,9 @@ router.use(authenticate);
 router.get('/', authorize('OPERARIO', 'CLIENTE'), validate(orderQuery, 'query'), getServiceOrders);
 router.get('/track/:placa', authorize('OPERARIO', 'CLIENTE'), validate(placaParam, 'params'), trackOrderByPlaca);
 router.get('/:id/prediction', authorize('OPERARIO', 'CLIENTE'), validate(idParam, 'params'), getOrderPrediction);
+router.get('/:id/timeline', authorize('OPERARIO', 'CLIENTE'), validate(idParam, 'params'), getOrderTimeline);
 router.post('/', authorize('OPERARIO'), validate(createOrderSchema, 'body'), createServiceOrder);
+router.post('/:id/ready', authorize('OPERARIO'), validate(idParam, 'params'), markOrderReady);
 router.patch(
   '/:id/phase',
   authorize('OPERARIO'),

@@ -73,9 +73,10 @@ const calculateDeliveryPrediction = (order, options = {}) => {
   const accuracyPercentage = getDeterministicAccuracy(order.id);
 
   // Delay detection: check if time elapsed in current phase exceeds phase duration
+  // Only applies when listoParaLavar is true; a PENDIENTE order not yet ready is never flagged as delayed
   const lastChangeTime = new Date(order.updatedAt || order.createdAt || now).getTime();
   const elapsed = now - lastChangeTime;
-  const isDelayed = !isNaN(lastChangeTime) && elapsed > phaseDurationMs;
+  const isDelayed = Boolean(order.listoParaLavar) && !isNaN(lastChangeTime) && elapsed > phaseDurationMs;
 
   const recalculated = isDelayed;
   const message = isDelayed ? 'Tiempo recalculado por posible retraso' : null;

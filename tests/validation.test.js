@@ -291,6 +291,7 @@ async function runValidationTests() {
     // Cleanup created orders and vehicles
     for (const orderId of createdOrderIds) {
       await prisma.evidence.deleteMany({ where: { serviceOrderId: orderId } });
+      await prisma.phaseEvent.deleteMany({ where: { orderId } });
       await prisma.serviceOrder.deleteMany({ where: { id: orderId } });
     }
     for (const vehicleId of createdVehicleIds) {
