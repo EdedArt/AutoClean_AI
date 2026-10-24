@@ -211,7 +211,7 @@ const simulateAdvanceOrder = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   const order = await prisma.serviceOrder.findUnique({
-    where: { id },
+    where: { id: Number(id) },
   });
 
   if (!order) {
@@ -231,55 +231,21 @@ const simulateAdvanceOrder = asyncHandler(async (req, res) => {
     throw AppError.badRequest('Order is already completed.', 'ORDER_COMPLETED');
   }
 
-  const nextProgress = PHASE_PROGRESS_MAP[nextPhase];
-
-  const updatedOrder = await prisma.serviceOrder.update({
-    where: { id },
-    data: {
-      faseActual: nextPhase,
-      porcentajeProgreso: nextProgress,
-      updatedAt: new Date(),
-    },
-    include: {
-      vehicle: true,
-      package: true,
-      bay: true,
-    },
-  });
+  const updatedOrder = await changePhase(id, nextPhase, { source: 'DEMO' });
 
   console.log(`[DEMO] Order #${id} force-advanced ${currentPhase} -> ${nextPhase}`);
   res.status(200).json(updatedOrder);
 });
 
 /**
- * Demo Control: Reset an order back to RECIBIDO (10%) and restart simulation timer
+ * Demo Control: Reset an order back to PENDIENTE (10%) and restart simulation timer
  */
 const simulateResetOrder = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
-  const order = await prisma.serviceOrder.findUnique({
-    where: { id },
-  });
+  const updatedOrder = await changePhase(id, 'PENDIENTE', { source: 'DEMO' });
 
-  if (!order) {
-    throw AppError.notFound('Service order not found');
-  }
-
-  const updatedOrder = await prisma.serviceOrder.update({
-    where: { id },
-    data: {
-      faseActual: 'RECIBIDO',
-      porcentajeProgreso: 10,
-      updatedAt: new Date(),
-    },
-    include: {
-      vehicle: true,
-      package: true,
-      bay: true,
-    },
-  });
-
-  console.log(`[DEMO] Order #${id} reset to RECIBIDO`);
+  console.log(`[DEMO] Order #${id} reset to PENDIENTE`);
   res.status(200).json(updatedOrder);
 });
 
@@ -289,27 +255,7 @@ const simulateResetOrder = asyncHandler(async (req, res) => {
 const simulateCompleteOrder = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
-  const order = await prisma.serviceOrder.findUnique({
-    where: { id },
-  });
-
-  if (!order) {
-    throw AppError.notFound('Service order not found');
-  }
-
-  const updatedOrder = await prisma.serviceOrder.update({
-    where: { id },
-    data: {
-      faseActual: 'LISTO',
-      porcentajeProgreso: 100,
-      updatedAt: new Date(),
-    },
-    include: {
-      vehicle: true,
-      package: true,
-      bay: true,
-    },
-  });
+  const updatedOrder = await changePhase(id, 'LISTO', { source: 'DEMO' });
 
   console.log(`[DEMO] Order #${id} force-completed`);
   res.status(200).json(updatedOrder);
