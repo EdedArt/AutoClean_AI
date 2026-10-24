@@ -110,9 +110,9 @@ app.use('/api/packages', packageRoutes);
 app.use('/api/orders', serviceOrderRoutes);
 app.use('/api/orders', evidenceRoutes);
 app.use('/api/phases', phaseRoutes);
-app.use('/api', aiRoutes);
 app.use('/api/plates', plateRoutes);
 app.use('/api/me', meRoutes);
+app.use('/api', aiRoutes);
 
 
 // Centralized 404 and error handling middlewares

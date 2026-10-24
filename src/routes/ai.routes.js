@@ -14,8 +14,7 @@ const {
 const router = Router();
 
 // All AI endpoints require authenticated OPERARIO role
-router.use(authenticate);
-router.use(authorize('OPERARIO'));
+router.use(['/ai', '/orders'], authenticate, authorize('OPERARIO'));
 
 const handleUpload = (req, res, next) => {
   upload.any()(req, res, (err) => {

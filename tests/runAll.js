@@ -27,6 +27,7 @@ const tests = [
   path.join(__dirname, 'aiAnalysis.test.js'),
   path.join(__dirname, 'phaseRules.test.js'),
   path.join(__dirname, 'delivery.test.js'),
+  path.join(__dirname, 'plateLookup.test.js'),
 ];
 
 for (const testFile of tests) {
