@@ -10,8 +10,12 @@ class AppError extends Error {
     this.name = 'AppError';
     this.statusCode = statusCode;
     this.code = code;
-    if (details && Array.isArray(details) && details.length > 0) {
-      this.details = details;
+    if (details) {
+      if (Array.isArray(details) && details.length > 0) {
+        this.details = details;
+      } else if (typeof details === 'object' && Object.keys(details).length > 0) {
+        this.details = details;
+      }
     }
     Error.captureStackTrace(this, this.constructor);
   }
