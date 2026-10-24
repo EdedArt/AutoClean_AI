@@ -98,8 +98,12 @@ async function analyze(params) {
   if (customProvider && customProvider.name !== 'gemini') {
     const res = await customProvider.analyzeImage(params);
     if (res && res.observations && !res.phaseSource) {
-      const { derivePhase } = require('./phaseRules');
-      const derived = derivePhase(res.observations, res.phase, res.phaseConfidence);
+      const { decidePhase } = require('./phaseRules');
+      const derived = decidePhase(res.observations, {
+        currentPhase: params.currentPhase,
+        modelPhase: res.phase,
+        modelConfidence: res.phaseConfidence,
+      });
       res.phase = derived.phase;
       res.phaseConfidence = derived.confidence;
       res.phaseSource = derived.source;
@@ -120,8 +124,12 @@ async function analyze(params) {
     try {
       const result = await activeGeminiProvider.analyzeImage(params);
       if (result && result.observations && !result.phaseSource) {
-        const { derivePhase } = require('./phaseRules');
-        const derived = derivePhase(result.observations, result.phase, result.phaseConfidence);
+        const { decidePhase } = require('./phaseRules');
+        const derived = decidePhase(result.observations, {
+          currentPhase: params.currentPhase,
+          modelPhase: result.phase,
+          modelConfidence: result.phaseConfidence,
+        });
         result.phase = derived.phase;
         result.phaseConfidence = derived.confidence;
         result.phaseSource = derived.source;

@@ -112,31 +112,38 @@ For manual verification across all wash phases, reference test images:
 
 ---
 
-### 5. Observation-Based Phase Classification & Decision Rules (Phase 22b)
+### 5. Context-Aware Observation Classification & Decision Rules (Phase 22c)
 
-To eliminate classification ambiguity between dry phases (`PENDIENTE` vs. `LISTO`), the vision pipeline enforces a two-tier hybrid decision system:
-1. **Multimodal Extraction (`geminiProvider.js`):** The model is instructed to first extract factual, physical visual `observations` before proposing a phase:
+#### Product Decision: Monitoring vs. Quality Audit
+AutoClean AI **MONITORS** a car wash; it does **NOT** audit wash quality. The AI must never flag "dirty after wash" or "quality review". Instead, the final phase is decided by combining physical photo observations with the order's **CURRENT phase** (`currentPhase` backend history).
+
+A dry car with no foam, no water, and no drying activity is inherently ambiguous on its own (it could be "dirty before wash" awaiting its cycle, or "ready after wash" waiting for client pickup); only the order context disambiguates which state applies:
+
+1. **Multimodal Extraction (`geminiProvider.js`):** The vision model extracts objective, physical visual `observations` from the vehicle camera frame:
    * `soapFoamVisible` (boolean): Whether white soap foam, shampoo suds, or active lather is visible on the vehicle surface.
    * `waterOnCar` (boolean): Whether the vehicle body is visibly wet, dripping, or being sprayed with water.
-   * `dryingInProgress` (boolean): Whether personnel are actively wiping with microfiber towels/chamois, using air blowers, or if the car is in a drying stall without foam.
-   * `visibleDirt` (`"none"` \| `"light"` \| `"heavy"`): True assessment of dust, road grime, mud, or stains.
-   * `cleanAndGlossy` (boolean): Whether the paint looks uniform, clean, shiny, polished, and free of dirt.
-   * `observationNotes` (string): Concise summary of visible physical facts.
+   * `dryingInProgress` (boolean): Whether personnel are actively wiping with microfiber towels/chamois, using air blowers, or if the car is in a drying bay without foam.
+   * `visibleDirt` (`"none"` | `"light"` | `"heavy"`): Visual assessment of dust, road grime, mud, or stains (stored for informative purposes only; never used to gate or audit `LISTO`).
+   * `cleanAndGlossy` (boolean): Whether the paint appears shiny or clean (informative only; never determines `LISTO`).
+   * `observationNotes` (string): Concise factual summary of visible physical facts.
 
-2. **Deterministic Rules Engine (`src/services/ai/phaseRules.js`):** Our backend evaluates the extracted physical observations through a deterministic decision table in strict priority order:
+2. **Deterministic Context-Aware Decision Engine (`src/services/ai/phaseRules.js`):** Our backend combines physical observations with the order context (`{ currentPhase }`) through a strict priority decision table:
 
-| Order | Physical Condition | Resulting Phase | Source | Explanation |
+| Priority | Physical Condition & Order Context | Decided Phase | Source | Explanation |
 | :---: | :--- | :---: | :---: | :--- |
-| **1** | `soapFoamVisible === true` | `LAVADO` | `rules` | Foam takes absolute precedence over all other signals |
-| **2** | `waterOnCar && dryingInProgress` | `SECADO` | `rules` | Wet vehicle actively undergoing manual/air drying |
-| **3** | `waterOnCar && !dryingInProgress` | `REMOJO` | `rules` | Wet vehicle without foam or drying (pre-rinse/rinse stage) |
-| **4** | `!waterOnCar && visibleDirt === "none" && cleanAndGlossy` | `LISTO` | `rules` | Dry, spotless, shiny car resolves to `LISTO` even if the model guessed `PENDIENTE` |
-| **5** | `!waterOnCar && visibleDirt in ["light", "heavy"] && !cleanAndGlossy` | `PENDIENTE` | `rules` | Dry car with visible grime awaiting initial wash cycle |
-| **6** | *Any contradictory or ambiguous combination* | *Model's Guess* | `model` | Falls back to model's phase guess with confidence capped at `0.70` |
+| **1** | `soapFoamVisible === true` | `LAVADO` | `rules` | Soap foam takes absolute precedence over all other signals in any order phase. |
+| **2** | `waterOnCar && dryingInProgress` | `SECADO` | `rules` | Vehicle is wet and active drying (towels/blowers) is underway. |
+| **3** | `waterOnCar && !dryingInProgress` | `REMOJO` | `rules` | Vehicle has water with no foam or drying (pre-rinse or rinse stage). |
+| **4a** | Dry car (`!foam && !water && !drying`) with `currentPhase` in `["SECADO", "LISTO"]` | `LISTO` | `rules` | The wash cycle has completed drying; resolves to `LISTO` regardless of `visibleDirt` or `cleanAndGlossy` (monitoring, not quality control). |
+| **4b** | Dry car (`!foam && !water && !drying`) with `currentPhase` in `["PENDIENTE", "REMOJO", "LAVADO"]` | `currentPhase` *(no change)* | `rules` | Vehicle is dry/waiting in the bay; never jumps to `LISTO` based on visual cleanliness. |
+| **4c** | Dry car without order context (smoke test / CLI) | `PENDIENTE` | `rules` | Resolves to `PENDIENTE` (with capped confidence `0.70` if `visibleDirt === "none"`); **never** `LISTO` without order context. |
+| **5** | *Contradictory or ambiguous observations* | *Model's Guess* | `model` | Falls back to model estimate with confidence capped at `0.70` (never `LISTO` unless order is already in `SECADO` or `LISTO`). |
 
 #### Confidence Scoring & Auditability:
 * **Rule-Derived Confidence:** For rule-resolved phases, confidence is calculated as `Math.min(modelConfidence, 0.95)` to preserve honest probabilistic evaluation while bounding deterministic rule matches.
-* **Audit Trail:** Responses from `POST /api/orders/:id/analyze` expose `observations`, `phaseSource` (`"rules"` \| `"model"`), and `phaseReason` directly in the payload and appended to order notes, enabling complete operational transparency.
+* **Audit Trail:** Responses from `POST /api/orders/:id/analyze` expose `observations`, `phaseSource` (`"rules"` | `"model"`), and `phaseReason` directly in the payload and appended to order notes, enabling complete operational transparency.
+* **Never-Regress Guarantee:** A decided phase earlier than the current order phase is safely ignored with `regression: true` and `changed: false`.
+
 
 ---
 
