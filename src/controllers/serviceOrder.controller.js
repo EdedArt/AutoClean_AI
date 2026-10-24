@@ -83,48 +83,68 @@ const getServiceOrders = asyncHandler(async (req, res) => {
 const createServiceOrder = asyncHandler(async (req, res) => {
   const { vehicleId, packageId, bayId } = req.body;
 
-  // Verify vehicle exists
-  const vehicleExists = await prisma.vehicle.findUnique({
-    where: { id: vehicleId },
-  });
-  if (!vehicleExists) {
-    throw AppError.notFound('Vehicle not found');
-  }
-
-  // Verify package exists if provided
-  if (packageId) {
-    const packageExists = await prisma.package.findUnique({
-      where: { id: packageId },
+  const newOrder = await prisma.$transaction(async (tx) => {
+    // Verify vehicle exists
+    const vehicleExists = await tx.vehicle.findUnique({
+      where: { id: vehicleId },
     });
-    if (!packageExists) {
-      throw AppError.notFound('Package not found');
+    if (!vehicleExists) {
+      throw AppError.notFound('Vehicle not found');
     }
-  }
 
-  // Verify bay exists and check occupancy if provided
-  if (bayId) {
-    const bay = await prisma.bay.findUnique({
-      where: { id: bayId },
+    // Verify package exists if provided
+    if (packageId) {
+      const packageExists = await tx.package.findUnique({
+        where: { id: packageId },
+      });
+      if (!packageExists) {
+        throw AppError.notFound('Package not found');
+      }
+    }
+
+    // Verify bay exists and check occupancy if provided
+    if (bayId) {
+      const bay = await tx.bay.findUnique({
+        where: { id: bayId },
+      });
+      if (!bay) {
+        throw AppError.notFound('Bay not found');
+      }
+      if (bay.ocupada) {
+        throw AppError.conflict('Bay is already occupied', 'BAY_OCCUPIED');
+      }
+      await tx.bay.update({
+        where: { id: bayId },
+        data: { ocupada: true },
+      });
+    }
+
+    const order = await tx.serviceOrder.create({
+      data: {
+        vehicleId,
+        packageId: packageId || null,
+        bayId: bayId || null,
+        faseActual: 'PENDIENTE',
+        porcentajeProgreso: 10,
+        listoParaLavar: false,
+      },
+      include: {
+        vehicle: true,
+        package: true,
+        bay: true,
+      },
     });
-    if (!bay) {
-      throw AppError.notFound('Bay not found');
-    }
-    if (bay.ocupada) {
-      throw AppError.conflict('Bay is already occupied', 'BAY_OCCUPIED');
-    }
-  }
 
-  const newOrder = await prisma.serviceOrder.create({
-    data: {
-      vehicleId,
-      packageId: packageId || null,
-      bayId: bayId || null,
-    },
-    include: {
-      vehicle: true,
-      package: true,
-      bay: true,
-    },
+    await tx.phaseEvent.create({
+      data: {
+        orderId: order.id,
+        fase: 'PENDIENTE',
+        progreso: 10,
+        source: 'MANUAL',
+      },
+    });
+
+    return order;
   });
 
   res.status(201).json(newOrder);
