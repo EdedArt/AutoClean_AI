@@ -152,6 +152,10 @@ async function analyzeImage({ buffer, mimeType = 'image/jpeg', expectedPlate }) 
     });
 
     try {
+      const normalizedMimeType = (mimeType === 'image/jfif' || mimeType === 'image/pjpeg')
+        ? 'image/jpeg'
+        : mimeType;
+
       const apiCall = client.models.generateContent({
         model: modelName,
         contents: [
@@ -160,7 +164,7 @@ async function analyzeImage({ buffer, mimeType = 'image/jpeg', expectedPlate }) 
             parts: [
               {
                 inlineData: {
-                  mimeType,
+                  mimeType: normalizedMimeType,
                   data: base64Data,
                 },
               },

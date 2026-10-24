@@ -4,24 +4,45 @@ const path = require('path');
 const { analyze } = require('../src/services/ai');
 
 async function runSmoke() {
-  const photoPath = process.argv[2];
+  // Recombine args in case Windows cmd / npm split on spaces
+  const rawArg = process.argv.slice(2).join(' ').trim();
+  const photoPath = rawArg.replace(/^["']|["']$/g, '');
 
   if (!photoPath) {
-    console.error('Usage: npm run ai:smoke -- <path-to-photo.jpg|png|webp>');
+    console.error('Usage: npm run ai:smoke -- <path-to-photo.jpg|png|webp|jfif>');
     process.exit(1);
   }
 
-  const resolvedPath = path.resolve(process.cwd(), photoPath);
+  let resolvedPath = path.resolve(process.cwd(), photoPath);
 
   if (!fs.existsSync(resolvedPath)) {
-    console.error(`Error: Photo file not found at: ${resolvedPath}`);
-    process.exit(1);
+    // If the path doesn't exist, check if an extension was omitted or mistyped (e.g. .jpg instead of .jfif)
+    const ext = path.extname(resolvedPath);
+    const basePath = ext ? resolvedPath.slice(0, -ext.length) : resolvedPath;
+    const commonExtensions = ['.jfif', '.jpg', '.jpeg', '.png', '.webp'];
+    const matchedExt = commonExtensions.find((e) => fs.existsSync(basePath + e));
+
+    if (matchedExt) {
+      resolvedPath = basePath + matchedExt;
+      console.log(`ℹ️  Note: Resolved ${path.basename(photoPath)} -> ${path.basename(resolvedPath)}`);
+    } else {
+      console.error(`Error: Photo file not found at: ${resolvedPath}`);
+      const parentDir = path.dirname(resolvedPath);
+      if (fs.existsSync(parentDir)) {
+        const found = fs.readdirSync(parentDir).filter((f) => /\.(jpe?g|png|webp|jfif)$/i.test(f));
+        if (found.length > 0) {
+          console.error(`Available images in folder: ${found.join(', ')}`);
+        }
+      }
+      process.exit(1);
+    }
   }
 
   const ext = path.extname(resolvedPath).toLowerCase();
   let mimeType = 'image/jpeg';
   if (ext === '.png') mimeType = 'image/png';
   if (ext === '.webp') mimeType = 'image/webp';
+  if (ext === '.jfif' || ext === '.jpg' || ext === '.jpeg') mimeType = 'image/jpeg';
 
   const buffer = fs.readFileSync(resolvedPath);
 

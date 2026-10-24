@@ -21,11 +21,17 @@ const storage = multer.diskStorage({
 });
 
 const fileFilter = (req, file, cb) => {
-  const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp'];
+  const allowedMimeTypes = [
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'image/jfif',
+    'image/pjpeg',
+  ];
   if (allowedMimeTypes.includes(file.mimetype)) {
     cb(null, true);
   } else {
-    const error = new Error('Solo se permiten archivos de imagen (JPEG, PNG, WEBP)');
+    const error = new Error('Solo se permiten archivos de imagen (JPEG, PNG, WEBP, JFIF)');
     error.status = 400;
     error.statusCode = 400;
     error.code = 'INVALID_FILE_TYPE';

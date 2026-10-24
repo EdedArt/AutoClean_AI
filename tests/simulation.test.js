@@ -1,3 +1,5 @@
+process.env.NODE_ENV = 'test';
+process.env.SIMULATION_AUTO_ADVANCE = 'true';
 const assert = require('assert');
 const prisma = require('../src/config/db');
 const {
