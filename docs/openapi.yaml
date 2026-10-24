@@ -1669,6 +1669,46 @@ components:
             confidence:
               type: number
               example: 0.92
+            source:
+              type: string
+              enum: [rules, model]
+              example: rules
+            reason:
+              type: string
+              nullable: true
+              example: Active soap foam or shampoo lather is visibly present on vehicle surface
+        observations:
+          type: object
+          nullable: true
+          description: Physical visual indicators observed on vehicle body
+          properties:
+            soapFoamVisible:
+              type: boolean
+              example: true
+            waterOnCar:
+              type: boolean
+              example: true
+            dryingInProgress:
+              type: boolean
+              example: false
+            visibleDirt:
+              type: string
+              enum: [none, light, heavy]
+              example: none
+            cleanAndGlossy:
+              type: boolean
+              example: false
+            observationNotes:
+              type: string
+              example: Vehicle covered in thick shampoo foam
+        phaseSource:
+          type: string
+          enum: [rules, model]
+          example: rules
+        phaseReason:
+          type: string
+          nullable: true
+          example: Active soap foam or shampoo lather is visibly present on vehicle surface
         dirtLevel:
           type: string
           nullable: true
