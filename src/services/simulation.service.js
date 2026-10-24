@@ -1,19 +1,37 @@
 const prisma = require('../config/db');
 
-const VALID_PHASES = ['RECIBIDO', 'LAVADO', 'SECADO', 'LISTO'];
+const VALID_PHASES = ['PENDIENTE', 'REMOJO', 'LAVADO', 'SECADO', 'LISTO'];
 
 const NEXT_PHASE_MAP = {
-  RECIBIDO: 'LAVADO',
+  PENDIENTE: 'REMOJO',
+  REMOJO: 'LAVADO',
   LAVADO: 'SECADO',
   SECADO: 'LISTO',
 };
 
 const PHASE_PROGRESS_MAP = {
-  RECIBIDO: 10,
-  LAVADO: 45,
+  PENDIENTE: 10,
+  REMOJO: 30,
+  LAVADO: 55,
   SECADO: 80,
   LISTO: 100,
 };
+
+const PHASE_LABELS = {
+  PENDIENTE: 'Pendiente',
+  REMOJO: 'Remojo',
+  LAVADO: 'Lavando',
+  SECADO: 'Secado',
+  LISTO: 'Listo',
+};
+
+const PHASE_CATALOG = [
+  { code: 'PENDIENTE', label: 'Pendiente', progress: 10, order: 1 },
+  { code: 'REMOJO', label: 'Remojo', progress: 30, order: 2 },
+  { code: 'LAVADO', label: 'Lavando', progress: 55, order: 3 },
+  { code: 'SECADO', label: 'Secado', progress: 80, order: 4 },
+  { code: 'LISTO', label: 'Listo', progress: 100, order: 5 },
+];
 
 const DEFAULT_PHASE_DURATION_MS = 60000; // 1 minute per phase by default
 
@@ -115,6 +133,8 @@ module.exports = {
   VALID_PHASES,
   NEXT_PHASE_MAP,
   PHASE_PROGRESS_MAP,
+  PHASE_LABELS,
+  PHASE_CATALOG,
   DEFAULT_PHASE_DURATION_MS,
   getPhaseDurationMs,
   getNextPhase,
