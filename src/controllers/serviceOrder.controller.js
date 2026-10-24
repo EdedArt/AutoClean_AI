@@ -324,6 +324,52 @@ const markOrderReady = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Deliver a service order (OPERARIO only)
+ * Sets deliveredAt = now if order is in LISTO phase and not already delivered.
+ */
+const deliverServiceOrder = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const orderId = Number(id);
+
+  const order = await prisma.serviceOrder.findUnique({
+    where: { id: orderId },
+    include: {
+      vehicle: true,
+      package: true,
+      bay: true,
+    },
+  });
+
+  if (!order) {
+    throw AppError.notFound('Service order not found');
+  }
+
+  if (order.deliveredAt) {
+    throw AppError.conflict('Order is already delivered', 'ALREADY_DELIVERED');
+  }
+
+  if (order.faseActual !== 'LISTO') {
+    throw AppError.conflict('Order cannot be delivered until it reaches LISTO phase', 'NOT_FINISHED');
+  }
+
+  const now = new Date();
+  const deliveredOrder = await prisma.serviceOrder.update({
+    where: { id: orderId },
+    data: {
+      deliveredAt: now,
+      updatedAt: now,
+    },
+    include: {
+      vehicle: true,
+      package: true,
+      bay: true,
+    },
+  });
+
+  res.status(200).json(deliveredOrder);
+});
+
+/**
  * Get timeline events of a service order
  */
 const getOrderTimeline = asyncHandler(async (req, res) => {
@@ -358,6 +404,13 @@ const getOrderTimeline = asyncHandler(async (req, res) => {
     createdAt: event.createdAt,
   }));
 
+  if (order.deliveredAt) {
+    timeline.push({
+      type: 'DELIVERED',
+      at: order.deliveredAt,
+    });
+  }
+
   res.status(200).json(timeline);
 });
 
@@ -372,4 +425,5 @@ module.exports = {
   simulateAdvanceOrder,
   simulateResetOrder,
   simulateCompleteOrder,
+  deliverServiceOrder,
 };
