@@ -390,12 +390,36 @@ const deliverServiceOrder = asyncHandler(async (req, res) => {
   }
 
   const now = new Date();
-  const deliveredOrder = await prisma.serviceOrder.update({
-    where: { id: orderId },
+  const updateResult = await prisma.serviceOrder.updateMany({
+    where: {
+      id: orderId,
+      deliveredAt: null,
+      faseActual: 'LISTO',
+    },
     data: {
       deliveredAt: now,
       updatedAt: now,
     },
+  });
+
+  if (updateResult.count === 0) {
+    const currentOrder = await prisma.serviceOrder.findUnique({
+      where: { id: orderId },
+    });
+
+    if (currentOrder?.deliveredAt) {
+      throw AppError.conflict('Order is already delivered', 'ALREADY_DELIVERED');
+    }
+
+    if (currentOrder?.faseActual !== 'LISTO') {
+      throw AppError.conflict('Order cannot be delivered until it reaches LISTO phase', 'NOT_FINISHED');
+    }
+
+    throw AppError.conflict('Order is already delivered', 'ALREADY_DELIVERED');
+  }
+
+  const deliveredOrder = await prisma.serviceOrder.findUnique({
+    where: { id: orderId },
     include: {
       vehicle: true,
       package: true,

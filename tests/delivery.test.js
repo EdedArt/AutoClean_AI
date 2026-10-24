@@ -370,6 +370,46 @@ async function runDeliveryTests() {
     assert.strictEqual(doubleDeliverRes.body.error.message, 'Order is already delivered');
     console.log('  ✅ Second delivery rejected with 409 ALREADY_DELIVERED.');
 
+    // 14b. Concurrent delivery with Promise.all (race condition safety)
+    console.log('\n14b. Testing concurrent delivery calls (Promise.all race condition safety)...');
+    const testPlacaConcurrent = `CNC-${Math.floor(100 + Math.random() * 900)}`;
+    const vConcurrent = await prisma.vehicle.create({
+      data: {
+        placa: testPlacaConcurrent,
+        marca: 'Ford',
+        modelo: 'Focus',
+        color: 'Azul',
+        ownerName: 'Concurrent Owner',
+        ownerId: client1.id,
+      },
+    });
+    createdVehicleIds.push(vConcurrent.id);
+
+    const concurrentOrderRes = await makeRequest(
+      'POST',
+      '/api/orders',
+      { vehicleId: vConcurrent.id },
+      operatorHeaders
+    );
+    assert.strictEqual(concurrentOrderRes.status, 201);
+    const concurrentOrderId = concurrentOrderRes.body.id;
+    createdOrderIds.push(concurrentOrderId);
+
+    await makeRequest('POST', `/api/orders/${concurrentOrderId}/simulate/complete`, {}, operatorHeaders);
+
+    const [deliverResA, deliverResB] = await Promise.all([
+      makeRequest('POST', `/api/orders/${concurrentOrderId}/deliver`, {}, operatorHeaders),
+      makeRequest('POST', `/api/orders/${concurrentOrderId}/deliver`, {}, operatorHeaders),
+    ]);
+
+    const statuses = [deliverResA.status, deliverResB.status].sort();
+    assert.deepStrictEqual(statuses, [200, 409], 'Concurrent deliveries must result in exactly one 200 and one 409');
+    const conflictRes = deliverResA.status === 409 ? deliverResA : deliverResB;
+    const successRes = deliverResA.status === 200 ? deliverResA : deliverResB;
+    assert.strictEqual(conflictRes.body.error.code, 'ALREADY_DELIVERED');
+    assert.ok(successRes.body.deliveredAt, 'Successful delivery must have deliveredAt timestamp');
+    console.log('  ✅ Concurrent delivery race condition handled: exactly one 200 and one 409 ALREADY_DELIVERED.');
+
     // 15. After delivery a new order for the same vehicle IS allowed
     console.log('\n15. Testing new order for same vehicle after delivery IS allowed...');
     const order2Res = await makeRequest(

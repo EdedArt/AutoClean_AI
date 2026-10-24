@@ -1,3 +1,4 @@
+require('dotenv').config();
 const { spawnSync } = require('child_process');
 const path = require('path');
 
@@ -5,7 +6,9 @@ console.log('====================================');
 console.log('Running AutoClean AI Backend Tests');
 console.log('====================================\n');
 
-process.env.NODE_ENV = 'test';
+if (!process.env.NODE_ENV) {
+  process.env.NODE_ENV = 'test';
+}
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret-at-least-32-chars-long-for-testing';
 process.env.AI_MODE = 'simulated';
 process.env.GEMINI_API_KEY = '';

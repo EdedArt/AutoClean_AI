@@ -1,7 +1,7 @@
 const prisma = require('../config/db');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
-const { computeOrderEta } = require('../services/eta.service');
+const { buildMinimalPlateView } = require('../services/plateView.service');
 
 /**
  * GET /api/me/plates
@@ -40,21 +40,7 @@ const getMyPlates = asyncHandler(async (req, res) => {
         };
       }
 
-      const eta = await computeOrderEta(activeOrder);
-      const status = {
-        placa: vehicle.placa,
-        marca: vehicle.marca,
-        modelo: vehicle.modelo,
-        color: vehicle.color,
-        fase: activeOrder.faseActual,
-        porcentajeProgreso: activeOrder.porcentajeProgreso,
-        listoParaLavar: activeOrder.listoParaLavar,
-        startedAt: activeOrder.readyAt ? activeOrder.readyAt.toISOString() : null,
-        receivedAt: activeOrder.createdAt ? activeOrder.createdAt.toISOString() : null,
-        etaMinutes: eta.etaMinutes,
-        etaLabel: eta.etaLabel,
-        estimatedReadyAt: eta.estimatedReadyAt,
-      };
+      const status = await buildMinimalPlateView(vehicle, activeOrder);
 
       return {
         placa: entry.placa,

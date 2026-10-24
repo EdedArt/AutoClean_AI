@@ -12,8 +12,15 @@ const notFoundHandler = (req, res, next) => {
  * Global centralized Express error handling middleware
  */
 const errorHandler = (err, req, res, next) => {
-  // Always log the full error to console
-  console.error(err);
+  // In test mode, do not print stack traces for expected AppError responses (< 500)
+  const isExpectedAppErrorInTest =
+    process.env.NODE_ENV === 'test' &&
+    err instanceof AppError &&
+    (err.statusCode || 500) < 500;
+
+  if (!isExpectedAppErrorInTest) {
+    console.error(err);
+  }
 
   let statusCode = err.statusCode || err.status || 500;
   let code = err.code || 'INTERNAL_ERROR';
