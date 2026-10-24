@@ -106,7 +106,7 @@ async function runAiAnalysisTests() {
     const clientHeaders = await getClientAuthHeaders();
 
     // Helper to create a fresh vehicle and ready order
-    async function createTestVehicleAndOrder({ placa = 'AIX-101', listo = true, currentPhase = 'PENDIENTE', nivelSuciedad = null } = {}) {
+    async function createTestVehicleAndOrder({ placa = 'AIX-101', listo = true, currentPhase = 'PENDIENTE', nivelSuciedad = null, bayId = null } = {}) {
       const v = await prisma.vehicle.create({
         data: {
           placa,
@@ -119,15 +119,20 @@ async function runAiAnalysisTests() {
       });
       createdVehicleIds.push(v.id);
 
+      if (bayId) {
+        await prisma.bay.update({ where: { id: bayId }, data: { ocupada: true } }).catch(() => {});
+      }
+
       const o = await prisma.serviceOrder.create({
         data: {
           vehicleId: v.id,
+          bayId: bayId || null,
           faseActual: currentPhase,
-          porcentajeProgreso: currentPhase === 'PENDIENTE' ? 10 : 30,
+          porcentajeProgreso: currentPhase === 'PENDIENTE' ? 10 : 80,
           listoParaLavar: listo,
           readyAt: listo ? new Date() : null,
         },
-        include: { vehicle: true },
+        include: { vehicle: true, bay: true },
       });
       createdOrderIds.push(o.id);
       return { vehicle: v, order: o };
@@ -515,24 +520,31 @@ async function runAiAnalysisTests() {
     assert.strictEqual(fastFailCaught, true, 'Startup validation must throw when AI_MODE=gemini and key is missing');
     console.log('  ✅ Startup validation correctly fails fast without printing secrets.');
 
-    // 17. Clean dry glossy car resolving to LISTO via rules even if model guessed PENDIENTE
-    console.log('\n17. Testing clean dry glossy car resolves to LISTO via rules even when model guessed PENDIENTE...');
-    const { order: orderGlossyFix } = await createTestVehicleAndOrder({ placa: 'GLS-777', listo: true, currentPhase: 'SECADO' });
+    // 17. Context-aware phase rules: order in SECADO ends in LISTO with bay freed and PhaseEvent source AI
+    console.log('\n17. Testing context-aware phase rules: order in SECADO ends in LISTO with bay freed and PhaseEvent source AI...');
+    const testBay = await prisma.bay.findFirst();
+    const { order: orderDrySecado } = await createTestVehicleAndOrder({
+      placa: 'DRY-777',
+      listo: true,
+      currentPhase: 'SECADO',
+      bayId: testBay ? testBay.id : null,
+    });
+
     aiService.setProvider({
       name: 'gemini',
       async analyzeImage() {
         return {
-          plateDetected: 'GLS-777',
+          plateDetected: 'DRY-777',
           plateConfidence: 0.95,
           observations: {
             soapFoamVisible: false,
             waterOnCar: false,
             dryingInProgress: false,
-            visibleDirt: 'none',
-            cleanAndGlossy: true,
-            observationNotes: 'Car is dry and glistening clean',
+            visibleDirt: 'heavy',
+            cleanAndGlossy: false,
+            observationNotes: 'Car is dry after drying phase; monitoring wash progress, ignoring dirt',
           },
-          phase: 'PENDIENTE', // Model erroneously guessed PENDIENTE
+          phase: 'PENDIENTE', // Model raw guess is overridden by rules
           phaseConfidence: 0.96,
           dirtLevel: null,
           notes: 'Model raw guess was PENDIENTE',
@@ -540,23 +552,129 @@ async function runAiAnalysisTests() {
       },
     });
 
-    const mpGlossyFix = buildMultipart();
-    const resListoRule = await makeRequest('POST', `/api/orders/${orderGlossyFix.id}/analyze`, mpGlossyFix.buffer, {
+    const mpDrySecado = buildMultipart();
+    const resListoRule = await makeRequest('POST', `/api/orders/${orderDrySecado.id}/analyze`, mpDrySecado.buffer, {
       ...operatorHeaders,
-      ...mpGlossyFix.headers,
+      ...mpDrySecado.headers,
     });
 
-    // Reset provider back to simulated
-    aiService.setProvider(null);
-
     assert.strictEqual(resListoRule.status, 200);
-    assert.strictEqual(resListoRule.body.phase.detected, 'LISTO', 'Rules must correct model guess from PENDIENTE to LISTO');
+    assert.strictEqual(resListoRule.body.phase.detected, 'LISTO', 'Rules must resolve dry car in SECADO to LISTO even with visibleDirt heavy');
     assert.strictEqual(resListoRule.body.phaseSource, 'rules');
     assert.strictEqual(resListoRule.body.phase.current, 'LISTO');
     assert.strictEqual(resListoRule.body.phase.changed, true);
-    assert.ok(resListoRule.body.observations);
-    assert.strictEqual(resListoRule.body.observations.cleanAndGlossy, true);
-    console.log('  ✅ Rules correctly override model PENDIENTE misclassification to LISTO for clean dry glossy car.');
+    assert.ok(resListoRule.body.phaseReason.includes('SECADO -> LISTO'));
+
+    // Check bay is released
+    if (orderDrySecado.bayId) {
+      const bayAfterListo = await prisma.bay.findUnique({ where: { id: orderDrySecado.bayId } });
+      assert.strictEqual(bayAfterListo.ocupada, false, 'Bay must be released when order reaches LISTO via AI');
+    }
+
+    // Check PhaseEvent with source AI
+    const listoAiEvent = await prisma.phaseEvent.findFirst({
+      where: {
+        orderId: orderDrySecado.id,
+        fase: 'LISTO',
+        source: 'AI',
+      },
+    });
+    assert.ok(listoAiEvent, 'PhaseEvent with source AI must be recorded upon transition to LISTO');
+    assert.strictEqual(listoAiEvent.progreso, 100);
+    console.log('  ✅ Order in SECADO analyzed with dry car ends in LISTO (bay released, PhaseEvent source AI).');
+
+    // 18. Order in PENDIENTE analyzed with a clean dry car stays PENDIENTE
+    console.log('\n18. Testing order in PENDIENTE analyzed with clean dry car stays PENDIENTE...');
+    const { order: orderPendienteClean } = await createTestVehicleAndOrder({
+      placa: 'CLN-888',
+      listo: true,
+      currentPhase: 'PENDIENTE',
+    });
+
+    aiService.setProvider({
+      name: 'gemini',
+      async analyzeImage() {
+        return {
+          plateDetected: 'CLN-888',
+          plateConfidence: 0.95,
+          observations: {
+            soapFoamVisible: false,
+            waterOnCar: false,
+            dryingInProgress: false,
+            visibleDirt: 'none',
+            cleanAndGlossy: true,
+            observationNotes: 'Car is clean and glossy but in PENDIENTE phase awaiting wash cycle',
+          },
+          phase: 'LISTO', // Model raw guess is LISTO but rules must NOT jump to LISTO!
+          phaseConfidence: 0.95,
+          dirtLevel: null,
+          notes: 'Model raw guess was LISTO',
+        };
+      },
+    });
+
+    const mpCleanPendiente = buildMultipart();
+    const resPendienteStay = await makeRequest('POST', `/api/orders/${orderPendienteClean.id}/analyze`, mpCleanPendiente.buffer, {
+      ...operatorHeaders,
+      ...mpCleanPendiente.headers,
+    });
+
+    assert.strictEqual(resPendienteStay.status, 200);
+    assert.strictEqual(resPendienteStay.body.phase.detected, 'PENDIENTE', 'Clean dry car in PENDIENTE must stay PENDIENTE');
+    assert.strictEqual(resPendienteStay.body.phase.current, 'PENDIENTE');
+    assert.strictEqual(resPendienteStay.body.phase.changed, false);
+    assert.strictEqual(resPendienteStay.body.phaseSource, 'rules');
+    assert.ok(resPendienteStay.body.phaseReason.includes('PENDIENTE -> keep PENDIENTE'));
+
+    const freshOrderPendiente = await prisma.serviceOrder.findUnique({ where: { id: orderPendienteClean.id } });
+    assert.strictEqual(freshOrderPendiente.faseActual, 'PENDIENTE', 'Order in database must remain PENDIENTE');
+    console.log('  ✅ Order in PENDIENTE analyzed with clean dry car stays PENDIENTE without jumping to LISTO.');
+
+    // 19. Regressions are still safely ignored
+    console.log('\n19. Testing regression phases are ignored with context-aware rules...');
+    const { order: orderLavadoReg } = await createTestVehicleAndOrder({
+      placa: 'REG-999',
+      listo: true,
+      currentPhase: 'LAVADO',
+    });
+
+    aiService.setProvider({
+      name: 'gemini',
+      async analyzeImage() {
+        return {
+          plateDetected: 'REG-999',
+          plateConfidence: 0.95,
+          observations: {
+            soapFoamVisible: false,
+            waterOnCar: true,
+            dryingInProgress: false,
+            visibleDirt: 'light',
+            cleanAndGlossy: false,
+            observationNotes: 'Water rinse stage',
+          },
+          phase: 'REMOJO',
+          phaseConfidence: 0.90,
+          dirtLevel: null,
+          notes: 'Pre-rinse detected',
+        };
+      },
+    });
+
+    const mpRegTest = buildMultipart();
+    const resRegTest = await makeRequest('POST', `/api/orders/${orderLavadoReg.id}/analyze`, mpRegTest.buffer, {
+      ...operatorHeaders,
+      ...mpRegTest.headers,
+    });
+
+    // Reset provider back to default simulated
+    aiService.setProvider(null);
+
+    assert.strictEqual(resRegTest.status, 200);
+    assert.strictEqual(resRegTest.body.phase.detected, 'REMOJO');
+    assert.strictEqual(resRegTest.body.phase.current, 'LAVADO');
+    assert.strictEqual(resRegTest.body.phase.changed, false);
+    assert.strictEqual(resRegTest.body.phase.regression, true);
+    console.log('  ✅ Earlier phase regression safely ignored; order remained in LAVADO.');
 
     console.log('\n🎉 All Phase 22 Gemini Vision & AI Analysis tests passed successfully!');
   } finally {
