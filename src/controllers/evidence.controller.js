@@ -27,7 +27,7 @@ const uploadEvidence = asyncHandler(async (req, res) => {
     throw AppError.notFound('Service order not found');
   }
 
-  const etapa = req.body.etapa || order.faseActual || 'RECIBIDO';
+  const etapa = req.body.etapa || order.faseActual || 'PENDIENTE';
   const relativeUrl = `/evidence/${req.file.filename}`;
 
   try {

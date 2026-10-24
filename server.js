@@ -114,11 +114,16 @@ app.use(errorHandler);
 // Background simulation scheduler: runs every ~10s and advances active orders
 const simulationInterval = setInterval(async () => {
   try {
+    if (!env.SIMULATION_AUTO_ADVANCE) {
+      return;
+    }
+
     const activeOrders = await prisma.serviceOrder.findMany({
       where: {
         faseActual: {
           not: 'LISTO',
         },
+        listoParaLavar: true,
       },
     });
 

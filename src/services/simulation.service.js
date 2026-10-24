@@ -72,6 +72,10 @@ const shouldAdvancePhase = (order, now, durationMs) => {
     return false;
   }
 
+  if (!order.listoParaLavar) {
+    return false;
+  }
+
   const nextPhase = getNextPhase(order.faseActual);
   if (!nextPhase) {
     return false;
@@ -96,6 +100,11 @@ const shouldAdvancePhase = (order, now, durationMs) => {
  */
 const advanceOrderPhase = async (order, options = {}) => {
   if (!order || !order.id) {
+    return null;
+  }
+
+  const env = require('../config/env');
+  if (env && env.SIMULATION_AUTO_ADVANCE === false) {
     return null;
   }
 
