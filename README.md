@@ -98,6 +98,14 @@ npm run ai:smoke -- path/to/vehicle.jpg
 * Prints ONLY the structured output, latency, provider, and model name.
 * **Secrets Protection:** Sanitizes and suppresses any API key values from output and logs.
 
+#### Reference Sample Images:
+For manual verification across all wash phases, reference test images:
+* `PENDIENTE`: `sucia.jfif`
+* `REMOJO`: `remojo.jfif`
+* `LAVADO`: `enjabonado.jfif`
+* `SECADO`: `secado.jfif`
+* `LISTO`: `terminado.jpg`
+
 > [!CAUTION]
 > **Free-Tier Privacy Notice:**
 > When using the free tier of Google AI Studio (Gemini API), Google may use input data and prompts to train and improve its models. Do **NOT** submit photographs of real private license plates or identifiable individuals in production without reviewing your Google Cloud / Workspace terms of service.

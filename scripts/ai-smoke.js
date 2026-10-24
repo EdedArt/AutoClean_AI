@@ -13,35 +13,11 @@ async function runSmoke() {
     process.exit(1);
   }
 
-  let resolvedPath = path.resolve(process.cwd(), photoPath);
+  const resolvedPath = path.resolve(process.cwd(), photoPath);
 
   if (!fs.existsSync(resolvedPath)) {
-    // If the path doesn't exist, check if an extension was omitted or mistyped (e.g. .jpg instead of .jfif)
-    const ext = path.extname(resolvedPath);
-    const basePath = ext ? resolvedPath.slice(0, -ext.length) : resolvedPath;
-    const commonExtensions = ['.jfif', '.jpg', '.jpeg', '.png', '.webp'];
-    const matchedExt = commonExtensions.find((e) => fs.existsSync(basePath + e));
-
-    if (matchedExt) {
-      resolvedPath = basePath + matchedExt;
-      console.log(`ℹ️  Note: Resolved ${path.basename(photoPath)} -> ${path.basename(resolvedPath)}`);
-    } else {
-      const parentDir = path.dirname(resolvedPath);
-      const baseNameWithoutExt = path.basename(resolvedPath, ext).toLowerCase();
-      if (baseNameWithoutExt === 'listo' && fs.existsSync(path.join(parentDir, 'terminado.jfif'))) {
-        resolvedPath = path.join(parentDir, 'terminado.jfif');
-        console.log(`ℹ️  Note: Resolved ${path.basename(photoPath)} -> terminado.jfif`);
-      } else {
-        console.error(`Error: Photo file not found at: ${resolvedPath}`);
-        if (fs.existsSync(parentDir)) {
-          const found = fs.readdirSync(parentDir).filter((f) => /\.(jpe?g|png|webp|jfif)$/i.test(f));
-          if (found.length > 0) {
-            console.error(`Available images in folder: ${found.join(', ')}`);
-          }
-        }
-        process.exit(1);
-      }
-    }
+    console.error(`Error: Photo file not found at: ${resolvedPath}`);
+    process.exit(1);
   }
 
   const ext = path.extname(resolvedPath).toLowerCase();
