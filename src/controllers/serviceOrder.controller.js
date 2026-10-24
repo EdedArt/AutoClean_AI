@@ -277,7 +277,45 @@ const simulateCompleteOrder = asyncHandler(async (req, res) => {
 
   const updatedOrder = await changePhase(id, 'LISTO', { source: 'DEMO' });
 
-  console.log(`[DEMO] Order #${id} force-completed`);
+/**
+ * Mark a service order as ready to wash (OPERARIO only)
+ */
+const markOrderReady = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const orderId = Number(id);
+
+  const order = await prisma.serviceOrder.findUnique({
+    where: { id: orderId },
+  });
+
+  if (!order) {
+    throw AppError.notFound('Service order not found');
+  }
+
+  if (order.faseActual !== 'PENDIENTE') {
+    throw AppError.conflict('Order must be in PENDIENTE phase to mark as ready', 'INVALID_STATE');
+  }
+
+  if (order.listoParaLavar) {
+    throw AppError.conflict('Order is already marked as ready to wash', 'ALREADY_READY');
+  }
+
+  const now = new Date();
+  const updatedOrder = await prisma.serviceOrder.update({
+    where: { id: orderId },
+    data: {
+      listoParaLavar: true,
+      readyAt: now,
+      updatedAt: now,
+    },
+    include: {
+      vehicle: true,
+      package: true,
+      bay: true,
+    },
+  });
+
+  console.log(`[READY] Order #${id} is now ready to wash`);
   res.status(200).json(updatedOrder);
 });
 
@@ -285,6 +323,7 @@ module.exports = {
   getServiceOrders,
   createServiceOrder,
   updateServicePhase,
+  markOrderReady,
   trackOrderByPlaca,
   getOrderPrediction,
   simulateAdvanceOrder,
