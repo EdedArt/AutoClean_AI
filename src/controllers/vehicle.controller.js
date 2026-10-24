@@ -2,22 +2,32 @@ const prisma = require('../config/db');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
 const { getPrismaPagination, buildPaginatedResponse } = require('../utils/pagination');
+const { getVehicleOwnershipFilter, checkVehicleAccess } = require('../utils/ownership');
 
 /**
- * Fetch all vehicles with search and pagination support
+ * Fetch all vehicles with search, pagination and role-based ownership filtering
  */
 const getVehicles = asyncHandler(async (req, res) => {
   const { page = 1, limit = 10, search } = req.query || {};
 
-  const where = {};
-  if (search) {
-    where.OR = [
-      { placa: { contains: search } },
-      { marca: { contains: search } },
-      { modelo: { contains: search } },
-    ];
+  const andConditions = [];
+
+  const ownershipFilter = getVehicleOwnershipFilter(req.user);
+  if (Object.keys(ownershipFilter).length > 0) {
+    andConditions.push(ownershipFilter);
   }
 
+  if (search) {
+    andConditions.push({
+      OR: [
+        { placa: { contains: search } },
+        { marca: { contains: search } },
+        { modelo: { contains: search } },
+      ],
+    });
+  }
+
+  const where = andConditions.length > 0 ? { AND: andConditions } : {};
   const { skip, take } = getPrismaPagination(page, limit);
 
   const [vehicles, total] = await prisma.$transaction([
@@ -34,7 +44,7 @@ const getVehicles = asyncHandler(async (req, res) => {
 });
 
 /**
- * Fetch a single vehicle by ID
+ * Fetch a single vehicle by ID with ownership verification
  */
 const getVehicleById = asyncHandler(async (req, res) => {
   const { id } = req.params;
@@ -43,9 +53,7 @@ const getVehicleById = asyncHandler(async (req, res) => {
     where: { id },
   });
 
-  if (!vehicle) {
-    throw AppError.notFound('Vehicle not found');
-  }
+  checkVehicleAccess(vehicle, req.user);
 
   res.status(200).json(vehicle);
 });
