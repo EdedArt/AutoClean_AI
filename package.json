@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node --watch server.js",
     "start": "node server.js",
-    "test": "node tests/runAll.js"
+    "test": "node tests/runAll.js",
+    "ai:smoke": "node scripts/ai-smoke.js"
   },
   "dependencies": {
     "@google/genai": "^2.31.0",
