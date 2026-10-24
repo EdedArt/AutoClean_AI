@@ -108,20 +108,11 @@ const advanceOrderPhase = async (order, options = {}) => {
 
   const currentPhase = order.faseActual;
   const nextPhase = getNextPhase(currentPhase);
-  const nextProgress = PHASE_PROGRESS_MAP[nextPhase];
 
-  const updatedOrder = await prisma.serviceOrder.update({
-    where: { id: order.id },
-    data: {
-      faseActual: nextPhase,
-      porcentajeProgreso: nextProgress,
-      updatedAt: new Date(now),
-    },
-    include: {
-      vehicle: true,
-      package: true,
-      bay: true,
-    },
+  const { changePhase } = require('./orderPhase.service');
+  const updatedOrder = await changePhase(order.id, nextPhase, {
+    source: 'SIMULATION',
+    updatedAt: new Date(now),
   });
 
   console.log(`[SIMULATION] Order #${order.id} advanced ${currentPhase} -> ${nextPhase}`);
