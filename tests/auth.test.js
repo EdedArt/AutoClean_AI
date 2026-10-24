@@ -281,6 +281,8 @@ async function runAuthTests() {
         placa: `OPE-${Math.floor(100 + Math.random() * 900)}`,
         marca: 'Ford',
         modelo: 'Focus',
+        color: 'Blanco',
+        ownerName: 'Operario Owner',
         nivelSuciedad: 'Leve',
       },
       operatorHeaders

@@ -82,6 +82,8 @@ async function runValidationTests() {
         placa: badPlate,
         marca: 'Toyota',
         modelo: 'Corolla',
+        color: 'Blanco',
+        ownerName: 'Validation Owner',
         nivelSuciedad: 'Leve',
       });
       assert.strictEqual(res.status, 400);
@@ -95,6 +97,8 @@ async function runValidationTests() {
     const missingPlacaRes = await makeRequest('POST', '/api/vehicles', {
       marca: 'Toyota',
       modelo: 'Corolla',
+      color: 'Blanco',
+      ownerName: 'Validation Owner',
       nivelSuciedad: 'Leve',
     });
     assert.strictEqual(missingPlacaRes.status, 400);
@@ -104,6 +108,8 @@ async function runValidationTests() {
     const missingMarcaRes = await makeRequest('POST', '/api/vehicles', {
       placa: 'VAL-101',
       modelo: 'Corolla',
+      color: 'Blanco',
+      ownerName: 'Validation Owner',
       nivelSuciedad: 'Leve',
     });
     assert.strictEqual(missingMarcaRes.status, 400);
@@ -114,6 +120,8 @@ async function runValidationTests() {
       placa: 'VAL-101',
       marca: 'Toyota',
       modelo: '   ',
+      color: 'Blanco',
+      ownerName: 'Validation Owner',
       nivelSuciedad: 'Leve',
     });
     assert.strictEqual(emptyModeloRes.status, 400);
@@ -127,6 +135,8 @@ async function runValidationTests() {
       placa: 'VAL-102',
       marca: 'Toyota',
       modelo: 'Corolla',
+      color: 'Blanco',
+      ownerName: 'Validation Owner',
       nivelSuciedad: 'Invalido',
     });
     assert.strictEqual(invalidSuciedad.status, 400);
@@ -141,6 +151,8 @@ async function runValidationTests() {
       placa: normalizedPlaca,
       marca: 'Toyota',
       modelo: 'Yaris',
+      color: 'Gris',
+      ownerName: 'Validation Owner',
       nivelSuciedad: 'Moderado',
     });
     assert.strictEqual(normRes.status, 201);

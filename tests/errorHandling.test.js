@@ -177,6 +177,8 @@ async function runErrorHandlingTests() {
       placa: testVehicle.placa,
       marca: 'Duplicate',
       modelo: 'Duplicate',
+      color: 'Negro',
+      ownerName: 'Duplicate Owner',
       nivelSuciedad: 'Leve',
     });
     assert.strictEqual(dupPlateRes.status, 409);

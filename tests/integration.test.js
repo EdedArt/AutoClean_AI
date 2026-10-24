@@ -65,6 +65,8 @@ async function runIntegrationTest() {
     placa: testPlaca,
     marca: 'Hyundai',
     modelo: 'Tucson',
+    color: 'Blanco',
+    ownerName: 'Sim Owner',
     nivelSuciedad: 'Severo',
   });
   assert.strictEqual(vRes.status, 201);
