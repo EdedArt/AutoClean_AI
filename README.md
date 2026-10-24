@@ -385,8 +385,8 @@ The API enforces strict data isolation based on authenticated JWT user roles:
   * **Catalog List (`GET /api/vehicles`):** Automatically filtered. Clients only see vehicles where `vehicle.ownerId === req.user.id`. Search (`?search=...`) and pagination operate exclusively within the client's own vehicles.
   * **Vehicle Detail (`GET /api/vehicles/:id`):** Requesting a vehicle owned by another user or without an owner returns HTTP `404 Not Found` (avoids disclosing whether the vehicle exists).
   * **Orders List (`GET /api/orders`):** Automatically filtered to orders for vehicles owned by the client.
-  * **Plate Tracking (`GET /api/orders/track/:placa`):** Clients can only track license plates of vehicles they own. Tracking any unowned plate returns the identical HTTP `404 Not Found` response as a non-existent plate.
-  * **Predictions & Photographic Evidence (`GET /api/orders/:id/prediction`, `GET /api/orders/:orderId/evidence`):** Restricted to the owner. Returns HTTP `404 Not Found` if requested by another client.
+  * **Predictions (`GET /api/orders/:id/prediction`):** Restricted to the owner. Returns HTTP `404 Not Found` if requested by another client.
+  * **Photographic Evidence (`GET /api/orders/:orderId/evidence`):** Restricted exclusively to `OPERARIO`. Any `CLIENTE` (even the vehicle owner) receives HTTP `403 Forbidden` as workshop cameras and photos are strictly private to the shop.
   * **Bays & Packages (`GET /api/bays`, `GET /api/packages`):** Freely accessible to all authenticated roles.
 
 ---
@@ -979,7 +979,7 @@ Fetches delivery prediction metrics for a specific order.
 
 **Example cURL:**
 ```bash
-curl http://localhost:3000/api/orders/1/prediction
+curl -H "Authorization: Bearer <TOKEN>" http://localhost:3000/api/orders/1/prediction
 ```
 
 ---
@@ -1008,7 +1008,7 @@ Retrieves current service order for a vehicle plate with prediction data embedde
 
 **Example cURL:**
 ```bash
-curl http://localhost:3000/api/orders/track/ABC-123
+curl -H "Authorization: Bearer <TOKEN>" http://localhost:3000/api/orders/track/ABC-123
 ```
 
 ---
@@ -1021,9 +1021,125 @@ curl http://localhost:3000/api/orders/track/ABC-123
 
 ---
 
+## Plate Status Lookup & Search History (Phase 24)
+
+Phase 24 introduces a universal license plate status lookup for any authenticated user, user search history for clients, and strict privacy controls that keep workshop cameras and evidence photos completely confidential.
+
+### 1. Universal Plate Status Lookup
+Any authenticated user (`CLIENTE` or `OPERARIO`) can look up **any** vehicle license plate. Knowing the plate number is sufficient; there is no vehicle ownership check on this endpoint. Both roles receive the **identical minimal view**.
+
+* **Endpoint:** `GET /api/plates/:placa/status`
+* **Plate Normalization:** Automatically trims whitespace, converts lowercase to uppercase, and inserts the standard hyphen if 6 alphanumeric characters are provided without a separator (e.g. `abc123` -> `ABC-123`).
+* **Active Order Only:** Only returns the vehicle's currently active order (`deliveredAt: null`). If no car is currently being washed with that plate (the vehicle never existed, has no order, or the order was delivered), returns HTTP `404 NOT_FOUND` with the exact message: `"No hay un carro lavándose con esta placa"`.
+* **Minimal View Fields (Strict Privacy Guarantee):**
+  ```json
+  {
+    "placa": "ABC-123",
+    "marca": "Toyota",
+    "modelo": "Corolla Cross",
+    "color": "Azul",
+    "fase": "LAVADO",
+    "porcentajeProgreso": 60,
+    "listoParaLavar": true,
+    "startedAt": "2026-10-24T18:00:00.000Z",
+    "receivedAt": "2026-10-24T17:50:00.000Z",
+    "etaMinutes": 25,
+    "etaLabel": "Aprox. 25 min",
+    "estimatedReadyAt": "2026-10-24T18:25:00.000Z"
+  }
+  ```
+  > [!IMPORTANT]
+  > **Privacy Boundary:** The minimal view strictly omits: vehicle owner name, email or ID, bay number/ID, internal user or order IDs, dirt levels (`nivelSuciedad`), AI camera analyses, and photo evidences.
+
+* **Frontend UI Animation Hint:**
+  The backend supplies canonical phase (`fase`), progress percentage (`porcentajeProgreso`), and human-friendly ETA label (`etaLabel`). The mobile/web frontend is responsible for rendering an animated vehicle icon moving smoothly along the wash line:
+  `PENDIENTE` -> `REMOJO` -> `LAVADO` -> `SECADO` -> `LISTO` (or "Listo para entregar").
+
+* **Dedicated Rate Limiting:**
+  * Protected by a dedicated rate limiter keyed by authenticated user ID.
+  * Configurable via environment variable `PLATE_LOOKUP_RATE_LIMIT_PER_MINUTE` (default: 30 requests/minute).
+  * Exceeding the quota returns unified HTTP `429 RATE_LIMITED`.
+
+**Example cURL:**
+```bash
+curl -X GET "http://localhost:3000/api/plates/ABC-123/status" \
+  -H "Authorization: Bearer <TOKEN>"
+```
+
+---
+
+### 2. Client Search History ("Saved Plates")
+Like a search box history, every valid plate a `CLIENTE` looks up is automatically remembered for quick future tracking.
+
+* **Automatic History Recording:** When a user with role `CLIENTE` looks up a plate on `GET /api/plates/:placa/status`, the plate is automatically saved in `SearchedPlate` with `lastSearchedAt = now` (whether the plate currently has an active order or not). OPERARIO lookups are never stored.
+* **10 Most Recent Limit:** The system retains a maximum of 10 searched plates per user, automatically purging the oldest entries in the same database transaction.
+* **Top-of-History Move:** Re-searching an existing plate updates its timestamp and moves it to the top of the history without creating duplicates.
+* **History Isolation:** Users can only view and manage their own search history.
+
+#### List Search History
+* **Endpoint:** `GET /api/me/plates` (Role: `CLIENTE` only; `OPERARIO` -> 403 `FORBIDDEN`)
+* **Response (200 OK):**
+  ```json
+  {
+    "data": [
+      {
+        "placa": "ABC-123",
+        "lastSearchedAt": "2026-10-24T18:30:00.000Z",
+        "status": {
+          "placa": "ABC-123",
+          "marca": "Toyota",
+          "modelo": "Corolla Cross",
+          "color": "Azul",
+          "fase": "LAVADO",
+          "porcentajeProgreso": 60,
+          "listoParaLavar": true,
+          "startedAt": "2026-10-24T18:00:00.000Z",
+          "receivedAt": "2026-10-24T17:50:00.000Z",
+          "etaMinutes": 25,
+          "etaLabel": "Aprox. 25 min",
+          "estimatedReadyAt": "2026-10-24T18:25:00.000Z"
+        }
+      },
+      {
+        "placa": "XYZ-999",
+        "lastSearchedAt": "2026-10-24T18:15:00.000Z",
+        "status": null,
+        "message": "No hay un carro lavándose con esta placa"
+      }
+    ]
+  }
+  ```
+  *(Note: Computing live statuses on `GET /api/me/plates` does not modify `lastSearchedAt`).*
+
+**Example cURL:**
+```bash
+curl -X GET "http://localhost:3000/api/me/plates" \
+  -H "Authorization: Bearer <CLIENT_TOKEN>"
+```
+
+#### Delete Plate from Search History
+* **Endpoint:** `DELETE /api/me/plates/:placa` (Role: `CLIENTE` only; `OPERARIO` -> 403 `FORBIDDEN`)
+* **Response:** HTTP `204 No Content` on success; HTTP `404 NOT_FOUND` if the plate is not in the user's search history.
+
+**Example cURL:**
+```bash
+curl -X DELETE "http://localhost:3000/api/me/plates/ABC-123" \
+  -H "Authorization: Bearer <CLIENT_TOKEN>"
+```
+
+---
+
+### 3. Photo Evidence Privacy Rule
+Workshop cameras and photographic evidence are internal to the business and private to shop operators:
+* `GET /api/orders/:orderId/evidence` is restricted strictly to `OPERARIO`.
+* Any `CLIENTE` attempting to access photo evidence receives HTTP `403 FORBIDDEN`, even for vehicles they own.
+* No evidence data or photo URLs are exposed in client-facing tracking or lookup endpoints.
+
+---
+
 ## Running Tests
 
-Execute the complete test suite (simulation, integration, demo controls, prediction, validation, and error handling):
+Execute the complete test suite (all 16 suites including simulation, integration, demo controls, prediction, validation, error handling, security, auth, ownership, phases, AI analysis, rules, delivery, and plate lookup):
 ```bash
 npm test
 ```

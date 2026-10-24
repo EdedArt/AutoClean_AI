@@ -94,6 +94,11 @@ const envSchema = z.object({
       return undefined;
     }, z.record(z.string(), z.number().nonnegative()).optional())
     .catch(undefined),
+  PLATE_LOOKUP_RATE_LIMIT_PER_MINUTE: z.coerce
+    .number({ invalid_type_error: 'PLATE_LOOKUP_RATE_LIMIT_PER_MINUTE must be an integer' })
+    .int()
+    .positive()
+    .default(30),
 });
 
 /**
@@ -209,6 +214,11 @@ const env = {
       } catch (_) {}
     }
     return parsed.PHASE_ETA_MINUTES;
+  },
+  get PLATE_LOOKUP_RATE_LIMIT_PER_MINUTE() {
+    return process.env.PLATE_LOOKUP_RATE_LIMIT_PER_MINUTE !== undefined
+      ? parseInt(process.env.PLATE_LOOKUP_RATE_LIMIT_PER_MINUTE, 10)
+      : parsed.PLATE_LOOKUP_RATE_LIMIT_PER_MINUTE;
   },
   validateEnv,
   envSchema,

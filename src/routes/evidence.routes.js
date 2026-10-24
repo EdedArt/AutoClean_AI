@@ -37,6 +37,6 @@ router.post(
   uploadEvidence
 );
 
-router.get('/:orderId/evidence', authorize('OPERARIO', 'CLIENTE'), validate(orderIdParam, 'params'), getEvidencesByOrder);
+router.get('/:orderId/evidence', authorize('OPERARIO'), validate(orderIdParam, 'params'), getEvidencesByOrder);
 
 module.exports = router;

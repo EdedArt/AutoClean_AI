@@ -1,9 +1,18 @@
 const { z } = require('zod');
 
+const normalizePlacaString = (val) => {
+  if (typeof val !== 'string') return val;
+  const upper = val.trim().toUpperCase();
+  if (/^[A-Z0-9]{6}$/.test(upper)) {
+    return `${upper.slice(0, 3)}-${upper.slice(3)}`;
+  }
+  return upper;
+};
+
 const placaSchema = z
   .string({ required_error: 'Field "placa" is required' })
   .trim()
-  .transform((val) => val.toUpperCase())
+  .transform((val) => normalizePlacaString(val))
   .pipe(
     z.string().regex(/^[A-Z]{3}-\d{3}$/, 'Placa must be in format XXX-123 (three letters, hyphen, three digits)')
   );
@@ -27,6 +36,7 @@ const placaParam = z.object({
 });
 
 module.exports = {
+  normalizePlacaString,
   placaSchema,
   idParam,
   idParamSchema: idParam,

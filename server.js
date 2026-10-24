@@ -18,6 +18,8 @@ const evidenceRoutes = require('./src/routes/evidence.routes');
 const authRoutes = require('./src/routes/auth.routes');
 const phaseRoutes = require('./src/routes/phase.routes');
 const aiRoutes = require('./src/routes/ai.routes');
+const plateRoutes = require('./src/routes/plate.routes');
+const meRoutes = require('./src/routes/me.routes');
 const { notFoundHandler, errorHandler } = require('./src/middlewares/error.middleware');
 
 const app = express();
@@ -108,6 +110,8 @@ app.use('/api/packages', packageRoutes);
 app.use('/api/orders', serviceOrderRoutes);
 app.use('/api/orders', evidenceRoutes);
 app.use('/api/phases', phaseRoutes);
+app.use('/api/plates', plateRoutes);
+app.use('/api/me', meRoutes);
 app.use('/api', aiRoutes);
 
 
