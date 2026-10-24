@@ -19,6 +19,7 @@ const getServiceOrders = asyncHandler(async (req, res) => {
     fase,
     bayId,
     activeOnly,
+    active,
     sort = 'newest',
   } = req.query || {};
 
@@ -49,7 +50,11 @@ const getServiceOrders = asyncHandler(async (req, res) => {
     });
   }
 
-  if (activeOnly) {
+  if (typeof active === 'boolean') {
+    andConditions.push({
+      deliveredAt: active ? null : { not: null },
+    });
+  } else if (activeOnly) {
     andConditions.push({
       faseActual: { not: 'LISTO' },
     });
