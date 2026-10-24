@@ -79,6 +79,21 @@ const envSchema = z.object({
     .int()
     .positive()
     .default(10),
+  PHASE_ETA_MINUTES: z
+    .preprocess((val) => {
+      if (val === undefined || val === null || val === '') return undefined;
+      if (typeof val === 'object') return val;
+      if (typeof val === 'string') {
+        try {
+          const parsed = JSON.parse(val);
+          if (typeof parsed === 'object' && parsed !== null) return parsed;
+        } catch (_) {
+          return undefined;
+        }
+      }
+      return undefined;
+    }, z.record(z.string(), z.number().nonnegative()).optional())
+    .catch(undefined),
 });
 
 /**
@@ -185,6 +200,15 @@ const env = {
   },
   get RATE_LIMIT_AI_MAX() {
     return process.env.RATE_LIMIT_AI_MAX !== undefined ? parseInt(process.env.RATE_LIMIT_AI_MAX, 10) : parsed.RATE_LIMIT_AI_MAX;
+  },
+  get PHASE_ETA_MINUTES() {
+    if (process.env.PHASE_ETA_MINUTES) {
+      try {
+        const p = JSON.parse(process.env.PHASE_ETA_MINUTES);
+        if (typeof p === 'object' && p !== null) return p;
+      } catch (_) {}
+    }
+    return parsed.PHASE_ETA_MINUTES;
   },
   validateEnv,
   envSchema,
