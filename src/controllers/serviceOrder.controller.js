@@ -2,6 +2,7 @@ const prisma = require('../config/db');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
 const { getNextPhase, PHASE_PROGRESS_MAP } = require('../services/simulation.service');
+const { changePhase } = require('../services/orderPhase.service');
 const { calculateDeliveryPrediction } = require('../services/prediction.service');
 const { getPrismaPagination, buildPaginatedResponse } = require('../utils/pagination');
 const { getOrderOwnershipFilter, checkOrderAccess } = require('../utils/ownership');
@@ -136,27 +137,7 @@ const updateServicePhase = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { faseActual } = req.body;
 
-  const existingOrder = await prisma.serviceOrder.findUnique({
-    where: { id },
-  });
-  if (!existingOrder) {
-    throw AppError.notFound('Service order not found');
-  }
-
-  const porcentajeProgreso = PHASE_PROGRESS_MAP[faseActual];
-
-  const updatedOrder = await prisma.serviceOrder.update({
-    where: { id },
-    data: {
-      faseActual,
-      porcentajeProgreso,
-    },
-    include: {
-      vehicle: true,
-      package: true,
-      bay: true,
-    },
-  });
+  const updatedOrder = await changePhase(id, faseActual, { source: 'MANUAL' });
 
   res.status(200).json(updatedOrder);
 });
