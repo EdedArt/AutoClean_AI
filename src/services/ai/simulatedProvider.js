@@ -1,5 +1,5 @@
 const { VALID_PHASES, NEXT_PHASE_MAP } = require('../simulation.service');
-const { derivePhase } = require('./phaseRules');
+const { decidePhase, derivePhase } = require('./phaseRules');
 
 /**
  * Calculates a deterministic confidence score in [0.85, 0.97].
@@ -156,7 +156,11 @@ async function analyzeImage({
   }
 
   const observations = getObservationsForPhase(targetPhase, dirtLevel);
-  const derived = derivePhase(observations, targetPhase, rawPhaseConf);
+  const derived = decidePhase(observations, {
+    currentPhase,
+    modelPhase: targetPhase,
+    modelConfidence: rawPhaseConf,
+  });
 
   const notesWithReason = `${scenarioNote} [Phase: ${derived.phase} via ${derived.source} - ${derived.reason}]`;
 

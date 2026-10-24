@@ -2,7 +2,7 @@ const { GoogleGenAI, Type } = require('@google/genai');
 const { z } = require('zod');
 const env = require('../../config/env');
 const { VALID_PHASES } = require('../simulation.service');
-const { derivePhase } = require('./phaseRules');
+const { decidePhase, derivePhase } = require('./phaseRules');
 
 const observationsSchema = z.object({
   soapFoamVisible: z.boolean(),
@@ -185,7 +185,7 @@ function sanitizeError(err) {
  *   notes: string
  * }>}
  */
-async function analyzeImage({ buffer, mimeType = 'image/jpeg', expectedPlate }) {
+async function analyzeImage({ buffer, mimeType = 'image/jpeg', expectedPlate, currentPhase }) {
   if (!buffer || !Buffer.isBuffer(buffer)) {
     throw new Error('Image buffer is required for Gemini vision analysis');
   }
@@ -272,7 +272,11 @@ async function analyzeImage({ buffer, mimeType = 'image/jpeg', expectedPlate }) 
       }
 
       const raw = validationResult.data;
-      const derived = derivePhase(raw.observations, raw.phase, raw.phaseConfidence);
+      const derived = decidePhase(raw.observations, {
+        currentPhase,
+        modelPhase: raw.phase,
+        modelConfidence: raw.phaseConfidence,
+      });
 
       const notesWithReason = raw.notes
         ? `${raw.notes} [Phase: ${derived.phase} via ${derived.source} - ${derived.reason}]`
