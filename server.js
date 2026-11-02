@@ -24,6 +24,9 @@ const meRoutes = require('./src/routes/me.routes');
 const { notFoundHandler, errorHandler } = require('./src/middlewares/error.middleware');
 
 const app = express();
+
+// Trust reverse proxy (e.g. Render) for accurate client IP resolution in rate limiters
+app.set('trust proxy', 1);
 const PORT = env.PORT;
 const SIMULATION_INTERVAL_MS = 10000; // Check active orders every ~10 seconds
 
