@@ -164,6 +164,18 @@ process.on('uncaughtException', (err) => {
   process.exit(1);
 });
 
+// Optional database seeding on boot (for ephemeral hosting environments like Render free tier)
+if (env.SEED_ON_BOOT) {
+  const { seedDatabase } = require('./prisma/seed');
+  seedDatabase(prisma)
+    .then(() => {
+      console.log('✅ Database seeded on boot successfully');
+    })
+    .catch((error) => {
+      console.error('⚠️ Database seeding failed on boot (service continuing):', error.message || error);
+    });
+}
+
 const server = app.listen(PORT, HOST, () => {
   console.log(`AutoClean AI backend running on http://localhost:${PORT}`);
 });
