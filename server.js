@@ -24,7 +24,11 @@ const meRoutes = require('./src/routes/me.routes');
 const { notFoundHandler, errorHandler } = require('./src/middlewares/error.middleware');
 
 const app = express();
-const PORT = env.PORT;
+
+// Trust reverse proxy (e.g. Render) for accurate client IP resolution in rate limiters
+app.set('trust proxy', 1);
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : (env.PORT || 3000);
+const HOST = '0.0.0.0';
 const SIMULATION_INTERVAL_MS = 10000; // Check active orders every ~10 seconds
 
 // Disable X-Powered-By header
@@ -160,7 +164,19 @@ process.on('uncaughtException', (err) => {
   process.exit(1);
 });
 
-const server = app.listen(PORT, () => {
+// Optional database seeding on boot (for ephemeral hosting environments like Render free tier)
+if (env.SEED_ON_BOOT) {
+  const { seedDatabase } = require('./prisma/seed');
+  seedDatabase(prisma)
+    .then(() => {
+      console.log('✅ Database seeded on boot successfully');
+    })
+    .catch((error) => {
+      console.error('⚠️ Database seeding failed on boot (service continuing):', error.message || error);
+    });
+}
+
+const server = app.listen(PORT, HOST, () => {
   console.log(`AutoClean AI backend running on http://localhost:${PORT}`);
 });
 

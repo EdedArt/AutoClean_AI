@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: autoclean-ai-backend
+    env: node
+    plan: free
+    buildCommand: npm install && npx prisma generate
+    startCommand: npx prisma migrate deploy && npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: SEED_ON_BOOT
+        value: "true"
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: AI_MODE
+        value: auto
+      - key: AI_FALLBACK_TO_SIMULATED
+        value: "true"
+      - key: SIMULATION_AUTO_ADVANCE
+        value: "true"
+      - key: SIMULATION_PHASE_DURATION_MS
+        value: "60000"
+      - key: RATE_LIMIT_WINDOW_MS
+        value: "60000"
+      - key: RATE_LIMIT_MAX
+        value: "100"
