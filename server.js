@@ -27,7 +27,8 @@ const app = express();
 
 // Trust reverse proxy (e.g. Render) for accurate client IP resolution in rate limiters
 app.set('trust proxy', 1);
-const PORT = env.PORT;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : (env.PORT || 3000);
+const HOST = '0.0.0.0';
 const SIMULATION_INTERVAL_MS = 10000; // Check active orders every ~10 seconds
 
 // Disable X-Powered-By header
@@ -163,7 +164,7 @@ process.on('uncaughtException', (err) => {
   process.exit(1);
 });
 
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, HOST, () => {
   console.log(`AutoClean AI backend running on http://localhost:${PORT}`);
 });
 
