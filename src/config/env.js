@@ -27,6 +27,13 @@ const envSchema = z.object({
       if (typeof val === 'boolean') return val;
       return val.toLowerCase() === 'true' || val === '1';
     }),
+  SEED_ON_BOOT: z
+    .union([z.boolean(), z.string()])
+    .default(false)
+    .transform((val) => {
+      if (typeof val === 'boolean') return val;
+      return val.toLowerCase() === 'true' || val === '1';
+    }),
   CORS_ORIGINS: z
     .string()
     .default('*'),
@@ -156,6 +163,12 @@ const env = {
     return process.env.SIMULATION_PHASE_DURATION_MS
       ? parseInt(process.env.SIMULATION_PHASE_DURATION_MS, 10)
       : parsed.SIMULATION_PHASE_DURATION_MS;
+  },
+  get SEED_ON_BOOT() {
+    if (process.env.SEED_ON_BOOT !== undefined) {
+      return String(process.env.SEED_ON_BOOT).toLowerCase() === 'true' || process.env.SEED_ON_BOOT === '1';
+    }
+    return parsed.SEED_ON_BOOT;
   },
   get CORS_ORIGINS() {
     return process.env.CORS_ORIGINS !== undefined ? process.env.CORS_ORIGINS : parsed.CORS_ORIGINS;
