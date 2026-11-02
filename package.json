@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "AutoClean AI — Backend",
   "main": "server.js",
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
     "dev": "node --watch server.js",
     "start": "node server.js",
