@@ -1,13 +1,11 @@
-const prisma = require('../config/db');
+const bayService = require('../services/bay.service');
 const asyncHandler = require('../utils/asyncHandler');
 
 /**
  * Fetch all bays
  */
 const getBays = asyncHandler(async (req, res) => {
-  const bays = await prisma.bay.findMany({
-    orderBy: { numero: 'asc' },
-  });
+  const bays = await bayService.getAllBays();
   res.status(200).json(bays);
 });
 
@@ -15,17 +13,8 @@ const getBays = asyncHandler(async (req, res) => {
  * Fetch bay occupancy summary (total, occupied, free)
  */
 const getBaySummary = asyncHandler(async (req, res) => {
-  const [total, occupied] = await prisma.$transaction([
-    prisma.bay.count(),
-    prisma.bay.count({ where: { ocupada: true } }),
-  ]);
-  const free = total - occupied;
-
-  res.status(200).json({
-    total,
-    occupied,
-    free,
-  });
+  const summary = await bayService.getBaySummary();
+  res.status(200).json(summary);
 });
 
 module.exports = {
