@@ -1,8 +1,6 @@
-const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const prisma = require('../config/db');
 const env = require('../config/env');
-const AppError = require('../utils/AppError');
+const authService = require('../services/auth.service');
 const asyncHandler = require('../utils/asyncHandler');
 
 /**
@@ -11,23 +9,7 @@ const asyncHandler = require('../utils/asyncHandler');
 const register = asyncHandler(async (req, res) => {
   const { nombre, email, password } = req.body;
 
-  const existingUser = await prisma.user.findUnique({ where: { email } });
-  if (existingUser) {
-    throw new AppError('A user with this email already exists', 409, 'DUPLICATE_RESOURCE');
-  }
-
-  const salt = await bcrypt.genSalt(10);
-  const passwordHash = await bcrypt.hash(password, salt);
-
-  // Self-registration strictly enforces role CLIENTE regardless of input
-  const user = await prisma.user.create({
-    data: {
-      nombre,
-      email,
-      passwordHash,
-      rol: 'CLIENTE',
-    },
-  });
+  const user = await authService.registerUser({ nombre, email, password });
 
   const userResponse = {
     id: user.id,
@@ -49,15 +31,7 @@ const register = asyncHandler(async (req, res) => {
 const login = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
 
-  const user = await prisma.user.findUnique({ where: { email } });
-  if (!user) {
-    throw new AppError('Invalid email or password', 401, 'INVALID_CREDENTIALS');
-  }
-
-  const isMatch = await bcrypt.compare(password, user.passwordHash);
-  if (!isMatch) {
-    throw new AppError('Invalid email or password', 401, 'INVALID_CREDENTIALS');
-  }
+  const user = await authService.authenticateUser({ email, password });
 
   const token = jwt.sign(
     {
