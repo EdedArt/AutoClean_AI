@@ -4,9 +4,9 @@ const path = require('path');
 
 console.log('🧪 Starting Architectural Layer Boundary Test Suite...\n');
 
-// Controllers not yet migrated to the service layer.
-// Passes 2 and 3 will empty this list; an empty allowlist is the end state.
-const PRISMA_CONTROLLER_ALLOWLIST = ['ai', 'evidence'];
+// Layer migration is complete; no controller may access Prisma directly.
+// This allowlist must remain empty.
+const PRISMA_CONTROLLER_ALLOWLIST = [];
 
 const ROOT_DIR = path.resolve(__dirname, '..');
 const CONTROLLERS_DIR = path.join(ROOT_DIR, 'src', 'controllers');
