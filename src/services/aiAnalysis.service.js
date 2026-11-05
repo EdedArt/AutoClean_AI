@@ -2,6 +2,8 @@ const fs = require('fs');
 const prisma = require('../config/db');
 const env = require('../config/env');
 const AppError = require('../utils/AppError');
+const { VALID_PHASES } = require('./simulation.service');
+const { changePhase } = require('./orderPhase.service');
 const aiService = require('./ai');
 
 /**
@@ -30,6 +32,7 @@ function safeUnlink(filePath) {
 
 /**
  * Camera frame AI vision analysis for a service order.
+ * Reads license plate, identifies wash phase, and advances order automatically.
  *
  * @param {object} params
  * @param {number|string} params.orderId
@@ -233,7 +236,109 @@ const analyzeOrderImage = async ({ orderId: rawOrderId, file, saveEvidence: rawS
     };
   }
 
-  return { order, aiResult, saveEvidence };
+  // d) Compare detected phase with current one using VALID_PHASES
+  const currentIdx = VALID_PHASES.indexOf(order.faseActual);
+  const detectedIdx = VALID_PHASES.indexOf(aiResult.result.phase);
+  let changed = false;
+  let regression = false;
+  let outcome = 'UNCHANGED';
+  let targetOrder = order;
+
+  if (detectedIdx > currentIdx) {
+    // Later phase: advance automatically via changePhase with source "AI"
+    targetOrder = await changePhase(order.id, aiResult.result.phase, { source: 'AI' });
+    changed = true;
+    outcome = 'APPLIED';
+  } else if (detectedIdx < currentIdx) {
+    // Earlier phase: do NOT move backwards
+    regression = true;
+    outcome = 'REGRESSION_IGNORED';
+  } else {
+    outcome = 'UNCHANGED';
+  }
+
+  // e) If vehicle's nivelSuciedad is null and AI returned dirtLevel, fill it in
+  if (!order.vehicle.nivelSuciedad && aiResult.result.dirtLevel) {
+    await prisma.vehicle.update({
+      where: { id: order.vehicle.id },
+      data: { nivelSuciedad: aiResult.result.dirtLevel },
+    });
+    if (targetOrder.vehicle) {
+      targetOrder.vehicle.nivelSuciedad = aiResult.result.dirtLevel;
+    }
+  }
+
+  // f) Save photo evidence if saveEvidence is true and plate matched
+  let evidenceRecord = null;
+  const resultingPhase = targetOrder.faseActual;
+
+  if (saveEvidence && file) {
+    const relativeUrl = `/evidence/${file.filename}`;
+    evidenceRecord = await prisma.evidence.create({
+      data: {
+        url: relativeUrl,
+        etapa: resultingPhase,
+        serviceOrderId: order.id,
+      },
+    });
+  } else {
+    safeUnlink(file.path);
+  }
+
+  // Record AiAnalysis audit event
+  await prisma.aiAnalysis.create({
+    data: {
+      orderId: order.id,
+      provider: aiResult.provider,
+      model: aiResult.model,
+      plateDetected: rawDetectedPlate,
+      plateMatched: true,
+      phaseDetected: aiResult.result.phase,
+      confidence: phaseConfidence,
+      outcome,
+      fallbackUsed: aiResult.fallbackUsed,
+      latencyMs: aiResult.latencyMs,
+    },
+  });
+
+  // Fetch updated order representation with relations
+  const finalOrder = await prisma.serviceOrder.findUnique({
+    where: { id: order.id },
+    include: {
+      vehicle: true,
+      package: true,
+      bay: true,
+    },
+  });
+
+  return {
+    provider: aiResult.provider,
+    model: aiResult.model,
+    fallbackUsed: aiResult.fallbackUsed,
+    plate: {
+      detected: rawDetectedPlate,
+      expected: order.vehicle.placa,
+      matched: true,
+      confidence: plateConfidence,
+    },
+    phase: {
+      previous: order.faseActual,
+      detected: aiResult.result.phase,
+      current: finalOrder.faseActual,
+      changed,
+      regression,
+      confidence: phaseConfidence,
+      source: aiResult.result.phaseSource || 'model',
+      reason: aiResult.result.phaseReason || null,
+    },
+    observations: aiResult.result.observations || null,
+    phaseSource: aiResult.result.phaseSource || 'model',
+    phaseReason: aiResult.result.phaseReason || null,
+    dirtLevel: aiResult.result.dirtLevel,
+    notes: aiResult.result.notes,
+    evidenceId: evidenceRecord ? evidenceRecord.id : null,
+    order: finalOrder,
+  };
 };
 
 /**
