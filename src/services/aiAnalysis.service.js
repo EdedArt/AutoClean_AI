@@ -74,6 +74,8 @@ const analyzeOrderImage = async ({ orderId: rawOrderId, file, saveEvidence: rawS
     throw AppError.conflict('Order is already completed', 'INVALID_STATE');
   }
 
+  const saveEvidence = rawSaveEvidence !== false;
+
   let buffer;
   try {
     buffer = await fs.promises.readFile(file.path);
@@ -114,7 +116,124 @@ const analyzeOrderImage = async ({ orderId: rawOrderId, file, saveEvidence: rawS
     throw aiErr;
   }
 
-  return { order, aiResult, saveEvidence: rawSaveEvidence !== false };
+  const rawDetectedPlate = aiResult.result.plateDetected;
+  const detectedNormalized = normalizePlate(rawDetectedPlate);
+  const expectedNormalized = normalizePlate(order.vehicle.placa);
+  const plateConfidence = Number(aiResult.result.plateConfidence) || 0;
+  const phaseConfidence = Number(aiResult.result.phaseConfidence) || 0;
+  const minConfidence = env.AI_MIN_CONFIDENCE || 0.6;
+
+  // a) Unreadable license plate or low confidence
+  if (!rawDetectedPlate || plateConfidence < minConfidence) {
+    safeUnlink(file.path);
+
+    await prisma.aiAnalysis.create({
+      data: {
+        orderId: order.id,
+        provider: aiResult.provider,
+        model: aiResult.model,
+        plateDetected: rawDetectedPlate,
+        plateMatched: false,
+        phaseDetected: aiResult.result.phase,
+        confidence: plateConfidence,
+        outcome: 'PLATE_UNREADABLE',
+        fallbackUsed: aiResult.fallbackUsed,
+        latencyMs: aiResult.latencyMs,
+      },
+    });
+
+    throw AppError.unprocessable('Unable to read license plate with sufficient confidence', 'PLATE_UNREADABLE');
+  }
+
+  // b) Wrong vehicle / plate mismatch
+  if (detectedNormalized !== expectedNormalized) {
+    safeUnlink(file.path);
+
+    await prisma.aiAnalysis.create({
+      data: {
+        orderId: order.id,
+        provider: aiResult.provider,
+        model: aiResult.model,
+        plateDetected: rawDetectedPlate,
+        plateMatched: false,
+        phaseDetected: aiResult.result.phase,
+        confidence: plateConfidence,
+        outcome: 'WRONG_VEHICLE',
+        fallbackUsed: aiResult.fallbackUsed,
+        latencyMs: aiResult.latencyMs,
+      },
+    });
+
+    throw new AppError(
+      'Wrong vehicle: the plate in the image does not match this order',
+      409,
+      'WRONG_VEHICLE',
+      { detected: rawDetectedPlate, expected: order.vehicle.placa }
+    );
+  }
+
+  // c) Plate matched, but phaseConfidence < AI_MIN_CONFIDENCE
+  if (phaseConfidence < minConfidence) {
+    let evidenceRecord = null;
+    if (saveEvidence && file) {
+      const relativeUrl = `/evidence/${file.filename}`;
+      evidenceRecord = await prisma.evidence.create({
+        data: {
+          url: relativeUrl,
+          etapa: order.faseActual,
+          serviceOrderId: order.id,
+        },
+      });
+    } else {
+      safeUnlink(file.path);
+    }
+
+    await prisma.aiAnalysis.create({
+      data: {
+        orderId: order.id,
+        provider: aiResult.provider,
+        model: aiResult.model,
+        plateDetected: rawDetectedPlate,
+        plateMatched: true,
+        phaseDetected: aiResult.result.phase,
+        confidence: phaseConfidence,
+        outcome: 'LOW_CONFIDENCE',
+        fallbackUsed: aiResult.fallbackUsed,
+        latencyMs: aiResult.latencyMs,
+      },
+    });
+
+    return {
+      provider: aiResult.provider,
+      model: aiResult.model,
+      fallbackUsed: aiResult.fallbackUsed,
+      plate: {
+        detected: rawDetectedPlate,
+        expected: order.vehicle.placa,
+        matched: true,
+        confidence: plateConfidence,
+      },
+      phase: {
+        previous: order.faseActual,
+        detected: aiResult.result.phase,
+        current: order.faseActual,
+        changed: false,
+        regression: false,
+        confidence: phaseConfidence,
+        source: aiResult.result.phaseSource || 'model',
+        reason: aiResult.result.phaseReason || null,
+      },
+      observations: aiResult.result.observations || null,
+      phaseSource: aiResult.result.phaseSource || 'model',
+      phaseReason: aiResult.result.phaseReason || null,
+      dirtLevel: aiResult.result.dirtLevel,
+      notes: aiResult.result.notes,
+      evidenceId: evidenceRecord ? evidenceRecord.id : null,
+      order,
+    };
+  }
+
+  return { order, aiResult, saveEvidence };
 };
 
 /**
