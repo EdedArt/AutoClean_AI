@@ -1,7 +1,9 @@
 const prisma = require('../config/db');
 const AppError = require('../utils/AppError');
+const { PHASE_LABELS } = require('./simulation.service');
+const { calculateDeliveryPrediction } = require('./prediction.service');
 const { getPrismaPagination, buildPaginatedResponse } = require('../utils/pagination');
-const { getOrderOwnershipFilter } = require('../utils/ownership');
+const { getOrderOwnershipFilter, checkOrderAccess } = require('../utils/ownership');
 const { enrichOrderWithEta } = require('./eta.service');
 
 /**
@@ -180,7 +182,124 @@ const createServiceOrder = async ({ vehicleId, packageId, bayId }) => {
   });
 };
 
+/**
+ * AI Delivery Time Prediction (Simulated) with ownership check.
+ *
+ * @param {number} id
+ * @param {object} user
+ * @returns {Promise<object>}
+ */
+const getOrderPrediction = async (id, user) => {
+  const order = await prisma.serviceOrder.findUnique({
+    where: { id },
+    include: {
+      vehicle: true,
+      package: true,
+      bay: true,
+    },
+  });
+
+  if (!order) {
+    throw AppError.notFound('Service order not found');
+  }
+
+  checkOrderAccess(order, user);
+
+  return calculateDeliveryPrediction(order);
+};
+
+/**
+ * Track the latest active service order for a given vehicle plate (placa) with ownership check.
+ *
+ * @param {string} placa
+ * @param {object} user
+ * @returns {Promise<object>}
+ */
+const trackOrderByPlaca = async (placa, user) => {
+  const order = await prisma.serviceOrder.findFirst({
+    where: {
+      vehicle: {
+        placa,
+      },
+      deliveredAt: null,
+    },
+    orderBy: {
+      createdAt: 'desc',
+    },
+    include: {
+      vehicle: true,
+      package: true,
+      bay: true,
+    },
+  });
+
+  if (!order) {
+    throw AppError.notFound('No hay un carro lavándose con esta placa');
+  }
+
+  checkOrderAccess(order, user, 'No hay un carro lavándose con esta placa');
+
+  const prediction = calculateDeliveryPrediction(order);
+  const enrichedOrder = await enrichOrderWithEta(order);
+
+  return {
+    ...enrichedOrder,
+    prediction,
+  };
+};
+
+/**
+ * Get timeline events of a service order with ownership check.
+ *
+ * @param {number|string} id
+ * @param {object} user
+ * @returns {Promise<Array<object>>}
+ */
+const getOrderTimeline = async (id, user) => {
+  const orderId = Number(id);
+
+  const order = await prisma.serviceOrder.findUnique({
+    where: { id: orderId },
+    include: {
+      vehicle: true,
+    },
+  });
+
+  if (!order) {
+    throw AppError.notFound('Service order not found');
+  }
+
+  checkOrderAccess(order, user);
+
+  const events = await prisma.phaseEvent.findMany({
+    where: { orderId },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  const timeline = events.map((event) => ({
+    id: event.id,
+    orderId: event.orderId,
+    fase: event.fase,
+    label: PHASE_LABELS[event.fase] || event.fase,
+    progreso: event.progreso,
+    source: event.source,
+    createdAt: event.createdAt,
+  }));
+
+  if (order.deliveredAt) {
+    timeline.push({
+      type: 'DELIVERED',
+      at: order.deliveredAt,
+    });
+  }
+
+  return timeline;
+};
+
 module.exports = {
   listServiceOrders,
   createServiceOrder,
+  getOrderPrediction,
+  trackOrderByPlaca,
+  getOrderTimeline,
 };
