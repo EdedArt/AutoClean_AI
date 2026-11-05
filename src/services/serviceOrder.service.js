@@ -1,6 +1,7 @@
 const prisma = require('../config/db');
 const AppError = require('../utils/AppError');
-const { PHASE_LABELS } = require('./simulation.service');
+const { getNextPhase, PHASE_LABELS } = require('./simulation.service');
+const { changePhase } = require('./orderPhase.service');
 const { calculateDeliveryPrediction } = require('./prediction.service');
 const { getPrismaPagination, buildPaginatedResponse } = require('../utils/pagination');
 const { getOrderOwnershipFilter, checkOrderAccess } = require('../utils/ownership');
@@ -183,6 +184,17 @@ const createServiceOrder = async ({ vehicleId, packageId, bayId }) => {
 };
 
 /**
+ * Update the service phase of an order manually.
+ *
+ * @param {number|string} id
+ * @param {string} faseActual
+ * @returns {Promise<object>}
+ */
+const updateServicePhase = async (id, faseActual) => {
+  return await changePhase(id, faseActual, { source: 'MANUAL' });
+};
+
+/**
  * AI Delivery Time Prediction (Simulated) with ownership check.
  *
  * @param {number} id
@@ -249,6 +261,188 @@ const trackOrderByPlaca = async (placa, user) => {
 };
 
 /**
+ * Demo Control: Force immediate advancement to the next phase.
+ *
+ * @param {number|string} id
+ * @returns {Promise<object>}
+ */
+const simulateAdvanceOrder = async (id) => {
+  const order = await prisma.serviceOrder.findUnique({
+    where: { id: Number(id) },
+  });
+
+  if (!order) {
+    throw AppError.notFound('Service order not found');
+  }
+
+  if (order.deliveredAt) {
+    throw AppError.conflict('Order is already delivered', 'ALREADY_DELIVERED');
+  }
+
+  if (order.faseActual === 'LISTO') {
+    console.warn(`[DEMO] Order #${id} force-advance rejected: Order is already completed.`);
+    throw AppError.badRequest('Order is already completed.', 'ORDER_COMPLETED');
+  }
+
+  const currentPhase = order.faseActual;
+  const nextPhase = getNextPhase(currentPhase);
+
+  if (!nextPhase) {
+    console.warn(`[DEMO] Order #${id} force-advance rejected: Order is already completed.`);
+    throw AppError.badRequest('Order is already completed.', 'ORDER_COMPLETED');
+  }
+
+  const updatedOrder = await changePhase(id, nextPhase, { source: 'DEMO' });
+
+  console.log(`[DEMO] Order #${id} force-advanced ${currentPhase} -> ${nextPhase}`);
+  return updatedOrder;
+};
+
+/**
+ * Demo Control: Reset an order back to PENDIENTE (10%) and restart simulation timer.
+ *
+ * @param {number|string} id
+ * @returns {Promise<object>}
+ */
+const simulateResetOrder = async (id) => {
+  const updatedOrder = await changePhase(id, 'PENDIENTE', { source: 'DEMO' });
+
+  console.log(`[DEMO] Order #${id} reset to PENDIENTE`);
+  return updatedOrder;
+};
+
+/**
+ * Demo Control: Force order directly to LISTO (100%).
+ *
+ * @param {number|string} id
+ * @returns {Promise<object>}
+ */
+const simulateCompleteOrder = async (id) => {
+  const updatedOrder = await changePhase(id, 'LISTO', { source: 'DEMO' });
+
+  console.log(`[DEMO] Order #${id} force-completed`);
+  return updatedOrder;
+};
+
+/**
+ * Mark a service order as ready to wash (OPERARIO only).
+ *
+ * @param {number|string} id
+ * @returns {Promise<object>}
+ */
+const markOrderReady = async (id) => {
+  const orderId = Number(id);
+
+  const order = await prisma.serviceOrder.findUnique({
+    where: { id: orderId },
+  });
+
+  if (!order) {
+    throw AppError.notFound('Service order not found');
+  }
+
+  if (order.deliveredAt) {
+    throw AppError.conflict('Order is already delivered', 'ALREADY_DELIVERED');
+  }
+
+  if (order.faseActual !== 'PENDIENTE') {
+    throw AppError.conflict('Order must be in PENDIENTE phase to mark as ready', 'INVALID_STATE');
+  }
+
+  if (order.listoParaLavar) {
+    throw AppError.conflict('Order is already marked as ready to wash', 'ALREADY_READY');
+  }
+
+  const now = new Date();
+  const updatedOrder = await prisma.serviceOrder.update({
+    where: { id: orderId },
+    data: {
+      listoParaLavar: true,
+      readyAt: now,
+      updatedAt: now,
+    },
+    include: {
+      vehicle: true,
+      package: true,
+      bay: true,
+    },
+  });
+
+  console.log(`[READY] Order #${id} is now ready to wash`);
+  return updatedOrder;
+};
+
+/**
+ * Deliver a service order (OPERARIO only).
+ * Sets deliveredAt = now if order is in LISTO phase and not already delivered.
+ *
+ * @param {number|string} id
+ * @returns {Promise<object>}
+ */
+const deliverServiceOrder = async (id) => {
+  const orderId = Number(id);
+
+  const order = await prisma.serviceOrder.findUnique({
+    where: { id: orderId },
+    include: {
+      vehicle: true,
+      package: true,
+      bay: true,
+    },
+  });
+
+  if (!order) {
+    throw AppError.notFound('Service order not found');
+  }
+
+  if (order.deliveredAt) {
+    throw AppError.conflict('Order is already delivered', 'ALREADY_DELIVERED');
+  }
+
+  if (order.faseActual !== 'LISTO') {
+    throw AppError.conflict('Order cannot be delivered until it reaches LISTO phase', 'NOT_FINISHED');
+  }
+
+  const now = new Date();
+  const updateResult = await prisma.serviceOrder.updateMany({
+    where: {
+      id: orderId,
+      deliveredAt: null,
+      faseActual: 'LISTO',
+    },
+    data: {
+      deliveredAt: now,
+      updatedAt: now,
+    },
+  });
+
+  if (updateResult.count === 0) {
+    const currentOrder = await prisma.serviceOrder.findUnique({
+      where: { id: orderId },
+    });
+
+    if (currentOrder?.deliveredAt) {
+      throw AppError.conflict('Order is already delivered', 'ALREADY_DELIVERED');
+    }
+
+    if (currentOrder?.faseActual !== 'LISTO') {
+      throw AppError.conflict('Order cannot be delivered until it reaches LISTO phase', 'NOT_FINISHED');
+    }
+
+    throw AppError.conflict('Order is already delivered', 'ALREADY_DELIVERED');
+  }
+
+  return await prisma.serviceOrder.findUnique({
+    where: { id: orderId },
+    include: {
+      vehicle: true,
+      package: true,
+      bay: true,
+    },
+  });
+};
+
+/**
  * Get timeline events of a service order with ownership check.
  *
  * @param {number|string} id
@@ -299,7 +493,13 @@ const getOrderTimeline = async (id, user) => {
 module.exports = {
   listServiceOrders,
   createServiceOrder,
-  getOrderPrediction,
-  trackOrderByPlaca,
+  updateServicePhase,
+  markOrderReady,
   getOrderTimeline,
+  trackOrderByPlaca,
+  getOrderPrediction,
+  simulateAdvanceOrder,
+  simulateResetOrder,
+  simulateCompleteOrder,
+  deliverServiceOrder,
 };
