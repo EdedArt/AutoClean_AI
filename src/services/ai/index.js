@@ -96,24 +96,24 @@ async function analyze(params) {
 
   // If a mock or custom provider other than gemini is injected, use it directly
   if (customProvider && customProvider.name !== 'gemini') {
-    const res = await customProvider.analyzeImage(params);
-    if (res && res.observations && !res.phaseSource) {
+    const result = await customProvider.analyzeImage(params);
+    if (result && result.observations && !result.phaseSource) {
       const { decidePhase } = require('./phaseRules');
-      const derived = decidePhase(res.observations, {
+      const derived = decidePhase(result.observations, {
         currentPhase: params.currentPhase,
-        modelPhase: res.phase,
-        modelConfidence: res.phaseConfidence,
+        modelPhase: result.phase,
+        modelConfidence: result.phaseConfidence,
       });
-      res.phase = derived.phase;
-      res.phaseConfidence = derived.confidence;
-      res.phaseSource = derived.source;
-      res.phaseReason = derived.reason;
+      result.phase = derived.phase;
+      result.phaseConfidence = derived.confidence;
+      result.phaseSource = derived.source;
+      result.phaseReason = derived.reason;
     }
     const latencyMs = Date.now() - startTime;
     return {
       provider: customProvider.name || 'simulated',
       model: customProvider.model || 'custom',
-      result: res,
+      result,
       latencyMs,
       fallbackUsed: Boolean(customProvider.fallbackUsed),
     };
