@@ -1,6 +1,6 @@
 const prisma = require('../config/db');
 const AppError = require('../utils/AppError');
-const { buildMinimalPlateView } = require('./plateView.service');
+const { findActivePlateView } = require('./plate.service');
 
 /**
  * Fetch plate search history for a user (ordered by lastSearchedAt desc, max 10)
@@ -17,21 +17,8 @@ const getSearchHistory = async (userId) => {
 
   return await Promise.all(
     searchedPlates.map(async (entry) => {
-      const vehicle = await prisma.vehicle.findUnique({
-        where: { placa: entry.placa },
-        include: {
-          serviceOrders: {
-            where: { deliveredAt: null },
-            include: {
-              phaseEvents: { orderBy: { createdAt: 'desc' }, take: 1 },
-            },
-            take: 1,
-          },
-        },
-      });
-
-      const activeOrder = vehicle && vehicle.serviceOrders && vehicle.serviceOrders[0];
-      if (!activeOrder) {
+      const status = await findActivePlateView(entry.placa);
+      if (!status) {
         return {
           placa: entry.placa,
           lastSearchedAt: entry.lastSearchedAt.toISOString(),
@@ -39,8 +26,6 @@ const getSearchHistory = async (userId) => {
           message: 'No hay un carro lavándose con esta placa',
         };
       }
-
-      const status = await buildMinimalPlateView(vehicle, activeOrder);
 
       return {
         placa: entry.placa,

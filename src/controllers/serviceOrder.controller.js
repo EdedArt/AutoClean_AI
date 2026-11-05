@@ -1,179 +1,20 @@
-const prisma = require('../config/db');
-const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
-const { getNextPhase, PHASE_PROGRESS_MAP, PHASE_LABELS } = require('../services/simulation.service');
-const { changePhase } = require('../services/orderPhase.service');
-const { calculateDeliveryPrediction } = require('../services/prediction.service');
-const { getPrismaPagination, buildPaginatedResponse } = require('../utils/pagination');
-const { getOrderOwnershipFilter, checkOrderAccess } = require('../utils/ownership');
-const { enrichOrderWithEta } = require('../services/eta.service');
+const serviceOrderService = require('../services/serviceOrder.service');
 
 /**
  * Fetch all service orders with nested vehicle, package, and bay data
  * Supports filtering by placa, fase, bayId, activeOnly, pagination/sort, and role-based ownership.
  */
 const getServiceOrders = asyncHandler(async (req, res) => {
-  const {
-    page = 1,
-    limit = 10,
-    placa,
-    fase,
-    bayId,
-    activeOnly,
-    active,
-    sort = 'newest',
-  } = req.query || {};
-
-  const andConditions = [];
-
-  const ownershipFilter = getOrderOwnershipFilter(req.user);
-  if (Object.keys(ownershipFilter).length > 0) {
-    andConditions.push(ownershipFilter);
-  }
-
-  if (placa) {
-    andConditions.push({
-      vehicle: {
-        placa: { contains: placa },
-      },
-    });
-  }
-
-  if (fase) {
-    andConditions.push({
-      faseActual: fase,
-    });
-  }
-
-  if (bayId) {
-    andConditions.push({
-      bayId,
-    });
-  }
-
-  if (typeof active === 'boolean') {
-    andConditions.push({
-      deliveredAt: active ? null : { not: null },
-    });
-  } else if (activeOnly) {
-    andConditions.push({
-      faseActual: { not: 'LISTO' },
-    });
-  }
-
-  const where = andConditions.length > 0 ? { AND: andConditions } : {};
-  const orderBy = { createdAt: sort === 'oldest' ? 'asc' : 'desc' };
-  const { skip, take } = getPrismaPagination(page, limit);
-
-  const [orders, total] = await prisma.$transaction([
-    prisma.serviceOrder.findMany({
-      where,
-      include: {
-        vehicle: true,
-        package: true,
-        bay: true,
-      },
-      orderBy,
-      skip,
-      take,
-    }),
-    prisma.serviceOrder.count({ where }),
-  ]);
-
-  const now = new Date();
-  const enrichedOrders = await Promise.all(
-    orders.map((order) => enrichOrderWithEta(order, { now }))
-  );
-
-  res.status(200).json(buildPaginatedResponse(enrichedOrders, total, page, limit));
+  const response = await serviceOrderService.listServiceOrders(req.query || {}, req.user);
+  res.status(200).json(response);
 });
 
 /**
  * Create a new service order
  */
 const createServiceOrder = asyncHandler(async (req, res) => {
-  const { vehicleId, packageId, bayId } = req.body;
-
-  const newOrder = await prisma.$transaction(async (tx) => {
-    // Verify vehicle exists
-    const vehicleExists = await tx.vehicle.findUnique({
-      where: { id: vehicleId },
-    });
-    if (!vehicleExists) {
-      throw AppError.notFound('Vehicle not found');
-    }
-
-    // Check if vehicle already has an active order
-    const activeOrder = await tx.serviceOrder.findFirst({
-      where: {
-        vehicleId,
-        deliveredAt: null,
-      },
-    });
-    if (activeOrder) {
-      throw new AppError(
-        'Vehicle already has an active service order',
-        409,
-        'ACTIVE_ORDER_EXISTS',
-        { orderId: activeOrder.id, faseActual: activeOrder.faseActual }
-      );
-    }
-
-    // Verify package exists if provided
-    if (packageId) {
-      const packageExists = await tx.package.findUnique({
-        where: { id: packageId },
-      });
-      if (!packageExists) {
-        throw AppError.notFound('Package not found');
-      }
-    }
-
-    // Verify bay exists and check occupancy if provided
-    if (bayId) {
-      const bay = await tx.bay.findUnique({
-        where: { id: bayId },
-      });
-      if (!bay) {
-        throw AppError.notFound('Bay not found');
-      }
-      if (bay.ocupada) {
-        throw AppError.conflict('Bay is already occupied', 'BAY_OCCUPIED');
-      }
-      await tx.bay.update({
-        where: { id: bayId },
-        data: { ocupada: true },
-      });
-    }
-
-    const order = await tx.serviceOrder.create({
-      data: {
-        vehicleId,
-        packageId: packageId || null,
-        bayId: bayId || null,
-        faseActual: 'PENDIENTE',
-        porcentajeProgreso: 10,
-        listoParaLavar: false,
-      },
-      include: {
-        vehicle: true,
-        package: true,
-        bay: true,
-      },
-    });
-
-    await tx.phaseEvent.create({
-      data: {
-        orderId: order.id,
-        fase: 'PENDIENTE',
-        progreso: 10,
-        source: 'MANUAL',
-      },
-    });
-
-    return order;
-  });
-
+  const newOrder = await serviceOrderService.createServiceOrder(req.body);
   res.status(201).json(newOrder);
 });
 
@@ -183,9 +24,7 @@ const createServiceOrder = asyncHandler(async (req, res) => {
 const updateServicePhase = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { faseActual } = req.body;
-
-  const updatedOrder = await changePhase(id, faseActual, { source: 'MANUAL' });
-
+  const updatedOrder = await serviceOrderService.updateServicePhase(id, faseActual);
   res.status(200).json(updatedOrder);
 });
 
@@ -195,23 +34,7 @@ const updateServicePhase = asyncHandler(async (req, res) => {
  */
 const getOrderPrediction = asyncHandler(async (req, res) => {
   const { id } = req.params;
-
-  const order = await prisma.serviceOrder.findUnique({
-    where: { id },
-    include: {
-      vehicle: true,
-      package: true,
-      bay: true,
-    },
-  });
-
-  if (!order) {
-    throw AppError.notFound('Service order not found');
-  }
-
-  checkOrderAccess(order, req.user);
-
-  const prediction = calculateDeliveryPrediction(order);
+  const prediction = await serviceOrderService.getOrderPrediction(id, req.user);
   res.status(200).json(prediction);
 });
 
@@ -220,37 +43,8 @@ const getOrderPrediction = asyncHandler(async (req, res) => {
  */
 const trackOrderByPlaca = asyncHandler(async (req, res) => {
   const { placa } = req.params;
-
-  const order = await prisma.serviceOrder.findFirst({
-    where: {
-      vehicle: {
-        placa,
-      },
-      deliveredAt: null,
-    },
-    orderBy: {
-      createdAt: 'desc',
-    },
-    include: {
-      vehicle: true,
-      package: true,
-      bay: true,
-    },
-  });
-
-  if (!order) {
-    throw AppError.notFound('No hay un carro lavándose con esta placa');
-  }
-
-  checkOrderAccess(order, req.user, 'No hay un carro lavándose con esta placa');
-
-  const prediction = calculateDeliveryPrediction(order);
-  const enrichedOrder = await enrichOrderWithEta(order);
-
-  res.status(200).json({
-    ...enrichedOrder,
-    prediction,
-  });
+  const result = await serviceOrderService.trackOrderByPlaca(placa, req.user);
+  res.status(200).json(result);
 });
 
 /**
@@ -258,35 +52,7 @@ const trackOrderByPlaca = asyncHandler(async (req, res) => {
  */
 const simulateAdvanceOrder = asyncHandler(async (req, res) => {
   const { id } = req.params;
-
-  const order = await prisma.serviceOrder.findUnique({
-    where: { id: Number(id) },
-  });
-
-  if (!order) {
-    throw AppError.notFound('Service order not found');
-  }
-
-  if (order.deliveredAt) {
-    throw AppError.conflict('Order is already delivered', 'ALREADY_DELIVERED');
-  }
-
-  if (order.faseActual === 'LISTO') {
-    console.warn(`[DEMO] Order #${id} force-advance rejected: Order is already completed.`);
-    throw AppError.badRequest('Order is already completed.', 'ORDER_COMPLETED');
-  }
-
-  const currentPhase = order.faseActual;
-  const nextPhase = getNextPhase(currentPhase);
-
-  if (!nextPhase) {
-    console.warn(`[DEMO] Order #${id} force-advance rejected: Order is already completed.`);
-    throw AppError.badRequest('Order is already completed.', 'ORDER_COMPLETED');
-  }
-
-  const updatedOrder = await changePhase(id, nextPhase, { source: 'DEMO' });
-
-  console.log(`[DEMO] Order #${id} force-advanced ${currentPhase} -> ${nextPhase}`);
+  const updatedOrder = await serviceOrderService.simulateAdvanceOrder(id);
   res.status(200).json(updatedOrder);
 });
 
@@ -295,10 +61,7 @@ const simulateAdvanceOrder = asyncHandler(async (req, res) => {
  */
 const simulateResetOrder = asyncHandler(async (req, res) => {
   const { id } = req.params;
-
-  const updatedOrder = await changePhase(id, 'PENDIENTE', { source: 'DEMO' });
-
-  console.log(`[DEMO] Order #${id} reset to PENDIENTE`);
+  const updatedOrder = await serviceOrderService.simulateResetOrder(id);
   res.status(200).json(updatedOrder);
 });
 
@@ -307,10 +70,7 @@ const simulateResetOrder = asyncHandler(async (req, res) => {
  */
 const simulateCompleteOrder = asyncHandler(async (req, res) => {
   const { id } = req.params;
-
-  const updatedOrder = await changePhase(id, 'LISTO', { source: 'DEMO' });
-
-  console.log(`[DEMO] Order #${id} force-completed`);
+  const updatedOrder = await serviceOrderService.simulateCompleteOrder(id);
   res.status(200).json(updatedOrder);
 });
 
@@ -319,44 +79,7 @@ const simulateCompleteOrder = asyncHandler(async (req, res) => {
  */
 const markOrderReady = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const orderId = Number(id);
-
-  const order = await prisma.serviceOrder.findUnique({
-    where: { id: orderId },
-  });
-
-  if (!order) {
-    throw AppError.notFound('Service order not found');
-  }
-
-  if (order.deliveredAt) {
-    throw AppError.conflict('Order is already delivered', 'ALREADY_DELIVERED');
-  }
-
-  if (order.faseActual !== 'PENDIENTE') {
-    throw AppError.conflict('Order must be in PENDIENTE phase to mark as ready', 'INVALID_STATE');
-  }
-
-  if (order.listoParaLavar) {
-    throw AppError.conflict('Order is already marked as ready to wash', 'ALREADY_READY');
-  }
-
-  const now = new Date();
-  const updatedOrder = await prisma.serviceOrder.update({
-    where: { id: orderId },
-    data: {
-      listoParaLavar: true,
-      readyAt: now,
-      updatedAt: now,
-    },
-    include: {
-      vehicle: true,
-      package: true,
-      bay: true,
-    },
-  });
-
-  console.log(`[READY] Order #${id} is now ready to wash`);
+  const updatedOrder = await serviceOrderService.markOrderReady(id);
   res.status(200).json(updatedOrder);
 });
 
@@ -366,67 +89,7 @@ const markOrderReady = asyncHandler(async (req, res) => {
  */
 const deliverServiceOrder = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const orderId = Number(id);
-
-  const order = await prisma.serviceOrder.findUnique({
-    where: { id: orderId },
-    include: {
-      vehicle: true,
-      package: true,
-      bay: true,
-    },
-  });
-
-  if (!order) {
-    throw AppError.notFound('Service order not found');
-  }
-
-  if (order.deliveredAt) {
-    throw AppError.conflict('Order is already delivered', 'ALREADY_DELIVERED');
-  }
-
-  if (order.faseActual !== 'LISTO') {
-    throw AppError.conflict('Order cannot be delivered until it reaches LISTO phase', 'NOT_FINISHED');
-  }
-
-  const now = new Date();
-  const updateResult = await prisma.serviceOrder.updateMany({
-    where: {
-      id: orderId,
-      deliveredAt: null,
-      faseActual: 'LISTO',
-    },
-    data: {
-      deliveredAt: now,
-      updatedAt: now,
-    },
-  });
-
-  if (updateResult.count === 0) {
-    const currentOrder = await prisma.serviceOrder.findUnique({
-      where: { id: orderId },
-    });
-
-    if (currentOrder?.deliveredAt) {
-      throw AppError.conflict('Order is already delivered', 'ALREADY_DELIVERED');
-    }
-
-    if (currentOrder?.faseActual !== 'LISTO') {
-      throw AppError.conflict('Order cannot be delivered until it reaches LISTO phase', 'NOT_FINISHED');
-    }
-
-    throw AppError.conflict('Order is already delivered', 'ALREADY_DELIVERED');
-  }
-
-  const deliveredOrder = await prisma.serviceOrder.findUnique({
-    where: { id: orderId },
-    include: {
-      vehicle: true,
-      package: true,
-      bay: true,
-    },
-  });
-
+  const deliveredOrder = await serviceOrderService.deliverServiceOrder(id);
   res.status(200).json(deliveredOrder);
 });
 
@@ -435,43 +98,7 @@ const deliverServiceOrder = asyncHandler(async (req, res) => {
  */
 const getOrderTimeline = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const orderId = Number(id);
-
-  const order = await prisma.serviceOrder.findUnique({
-    where: { id: orderId },
-    include: {
-      vehicle: true,
-    },
-  });
-
-  if (!order) {
-    throw AppError.notFound('Service order not found');
-  }
-
-  checkOrderAccess(order, req.user);
-
-  const events = await prisma.phaseEvent.findMany({
-    where: { orderId },
-    orderBy: { createdAt: 'asc' },
-  });
-
-  const timeline = events.map((event) => ({
-    id: event.id,
-    orderId: event.orderId,
-    fase: event.fase,
-    label: PHASE_LABELS[event.fase] || event.fase,
-    progreso: event.progreso,
-    source: event.source,
-    createdAt: event.createdAt,
-  }));
-
-  if (order.deliveredAt) {
-    timeline.push({
-      type: 'DELIVERED',
-      at: order.deliveredAt,
-    });
-  }
-
+  const timeline = await serviceOrderService.getOrderTimeline(id, req.user);
   res.status(200).json(timeline);
 });
 
