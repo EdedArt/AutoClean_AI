@@ -56,17 +56,19 @@ async function seedDatabase(prismaClient) {
       });
     }
 
-    // 3. Seed Wash Packages - create only if missing
+    // 3. Seed Wash Packages - create or update incluyePolichado flag
     const packagesToSeed = [
       {
         nombre: 'Lavado Básico',
         descripcion: 'Lavado exterior y aspirado rápido',
         precio: 25.0,
+        incluyePolichado: false,
       },
       {
         nombre: 'Lavado Profundo + Polichado',
         descripcion: 'Lavado exterior, interior, desinfección y polichado',
         precio: 55.0,
+        incluyePolichado: true,
       },
     ];
 
@@ -77,6 +79,11 @@ async function seedDatabase(prismaClient) {
       if (!existing) {
         await prisma.package.create({
           data: pkg,
+        });
+      } else {
+        await prisma.package.update({
+          where: { id: existing.id },
+          data: { incluyePolichado: pkg.incluyePolichado },
         });
       }
     }

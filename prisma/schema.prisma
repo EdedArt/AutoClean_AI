@@ -29,14 +29,15 @@ model Bay {
 }
 
 model Package {
-  id            Int            @id @default(autoincrement())
-  nombre        String
-  descripcion   String
-  precio        Float?
-  serviceOrders ServiceOrder[]
+  id               Int            @id @default(autoincrement())
+  nombre           String
+  descripcion      String
+  precio           Float?
+  incluyePolichado Boolean        @default(false)
+  serviceOrders    ServiceOrder[]
 }
 
-// ServicePhase: PENDIENTE | REMOJO | LAVADO | SECADO | LISTO
+// ServicePhase: PENDIENTE | REMOJO | LAVADO | SECADO | POLICHADO | LISTO
 model ServiceOrder {
   id                  Int          @id @default(autoincrement())
   vehicleId           Int

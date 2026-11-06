@@ -1,15 +1,36 @@
-const { VALID_PHASES, getPhaseDurationMs } = require('./simulation.service');
+const {
+  VALID_PHASES,
+  getPhaseDurationMs,
+  doesOrderIncludePolichado,
+} = require('./simulation.service');
+
+const PHASES_WITHOUT_POLICHADO = ['PENDIENTE', 'REMOJO', 'LAVADO', 'SECADO', 'LISTO'];
+const PHASES_WITH_POLICHADO = ['PENDIENTE', 'REMOJO', 'LAVADO', 'SECADO', 'POLICHADO', 'LISTO'];
 
 /**
- * Calculates remaining phase count until "LISTO" based on the canonical
- * VALID_PHASES sequence defined in simulation.service.js.
+ * Calculates remaining phase count until "LISTO".
+ * Counts POLICHADO as a remaining phase ONLY if the order's package includes polichado
+ * (or if the order is currently in POLICHADO).
  *
- * @param {string} currentPhase
+ * @param {string|object} currentPhase
+ * @param {object|boolean} [orderOrIncluyePolichado=false]
  * @returns {number}
  */
-const getRemainingPhasesCount = (currentPhase) => {
-  const listoIndex = VALID_PHASES.indexOf('LISTO');
-  const currentIndex = VALID_PHASES.indexOf(currentPhase);
+const getRemainingPhasesCount = (currentPhase, orderOrIncluyePolichado = false) => {
+  let resolvedPhase = currentPhase;
+  let resolvedOrderOrFlag = orderOrIncluyePolichado;
+
+  if (currentPhase && typeof currentPhase === 'object') {
+    resolvedOrderOrFlag = currentPhase;
+    resolvedPhase = currentPhase.faseActual;
+  }
+
+  const hasPolichado =
+    doesOrderIncludePolichado(resolvedOrderOrFlag) || resolvedPhase === 'POLICHADO';
+  const sequence = hasPolichado ? PHASES_WITH_POLICHADO : PHASES_WITHOUT_POLICHADO;
+
+  const listoIndex = sequence.indexOf('LISTO');
+  const currentIndex = sequence.indexOf(resolvedPhase);
 
   if (currentIndex === -1 || listoIndex === -1) {
     return 0;
@@ -67,7 +88,7 @@ const calculateDeliveryPrediction = (order, options = {}) => {
     };
   }
 
-  const remainingPhases = getRemainingPhasesCount(order.faseActual);
+  const remainingPhases = getRemainingPhasesCount(order.faseActual, order);
   const remainingTimeMs = remainingPhases * phaseDurationMs;
   const estimatedDeliveryTime = new Date(now + remainingTimeMs);
   const accuracyPercentage = getDeterministicAccuracy(order.id);

@@ -249,6 +249,57 @@ async function runPhaseRulesTests() {
   assert.strictEqual(derivePhase, decidePhase, 'derivePhase must be an alias of decidePhase');
   console.log('  ✅ Ambiguous, contradictory, and missing observation cases fallback to model phase with confidence capped at 0.7.\n');
 
+  // 10. POLICHADO rules: SECADO + incluyePolichado -> POLICHADO -> LISTO
+  console.log('10. Testing POLICHADO rules (with and without incluyePolichado)...');
+  const secadoWithPolichadoPaste = decidePhase(
+    {
+      soapFoamVisible: false,
+      waterOnCar: false,
+      dryingInProgress: false,
+      polishingInProgress: true,
+      whitePasteVisible: true,
+      visibleDirt: 'none',
+      cleanAndGlossy: false,
+      observationNotes: 'Carro seco con pasta/cera blanca opaca y operario frotando por zonas',
+    },
+    { currentPhase: 'SECADO', incluyePolichado: true, modelPhase: 'POLICHADO', modelConfidence: 0.93 }
+  );
+  assert.strictEqual(secadoWithPolichadoPaste.phase, 'POLICHADO');
+  assert.strictEqual(secadoWithPolichadoPaste.source, 'rules');
+
+  // If package includes polichado and currentPhase is SECADO, NEVER jump directly to LISTO
+  const secadoWithPolichadoGlossy = decidePhase(
+    {
+      soapFoamVisible: false,
+      waterOnCar: false,
+      dryingInProgress: false,
+      visibleDirt: 'none',
+      cleanAndGlossy: true,
+      observationNotes: 'Vehicle is dry and glossy right after SECADO',
+    },
+    { currentPhase: 'SECADO', package: { incluyePolichado: true }, modelPhase: 'LISTO', modelConfidence: 0.95 }
+  );
+  assert.notStrictEqual(secadoWithPolichadoGlossy.phase, 'LISTO', 'Must NOT jump directly from SECADO to LISTO when incluyePolichado is true');
+  assert.strictEqual(secadoWithPolichadoGlossy.phase, 'SECADO');
+
+  // From POLICHADO -> LISTO when dry, clean, and no paste residue
+  const listoFromPolichado = decidePhase(
+    {
+      soapFoamVisible: false,
+      waterOnCar: false,
+      dryingInProgress: false,
+      polishingInProgress: false,
+      whitePasteVisible: false,
+      visibleDirt: 'none',
+      cleanAndGlossy: true,
+      observationNotes: 'Carro limpio, brillante, sin residuos de pasta',
+    },
+    { currentPhase: 'POLICHADO', incluyePolichado: true, modelPhase: 'LISTO', modelConfidence: 0.94 }
+  );
+  assert.strictEqual(listoFromPolichado.phase, 'LISTO');
+  assert.strictEqual(listoFromPolichado.source, 'rules');
+  console.log('  ✅ POLICHADO transitions (SECADO -> POLICHADO -> LISTO) verified.\n');
+
   console.log('🎉 ALL PHASE DECISION RULES TESTS PASSED SUCCESSFULLY!\n');
 }
 

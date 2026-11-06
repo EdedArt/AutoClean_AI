@@ -545,6 +545,191 @@ async function runPhasesFlowTests() {
       }
     }
 
+    // =========================================================================
+    // 12. Flow WITHOUT polichado vs WITH polichado + progress percentages
+    // =========================================================================
+    console.log('\n12. Testing POLICHADO flow and progress percentages (with and without polichado)...');
+    const { changePhase, PHASE_PROGRESS_MAP, getEstimatedDurationForPhase } = require('../src/services/orderPhase.service');
+    const simulatedProvider = require('../src/services/ai/simulatedProvider');
+
+    // Verify PHASE_PROGRESS_MAP function returns expected maps
+    assert.deepStrictEqual(PHASE_PROGRESS_MAP(false), {
+      PENDIENTE: 10,
+      REMOJO: 30,
+      LAVADO: 55,
+      SECADO: 80,
+      LISTO: 100,
+    });
+    assert.deepStrictEqual(PHASE_PROGRESS_MAP(true), {
+      PENDIENTE: 10,
+      REMOJO: 25,
+      LAVADO: 45,
+      SECADO: 65,
+      POLICHADO: 85,
+      LISTO: 100,
+    });
+
+    const pkgSinPolichado = await prisma.package.findFirst({ where: { incluyePolichado: false } }) ||
+      await prisma.package.create({ data: { nombre: 'Test Básico', descripcion: 'Sin polichado', precio: 25000, duracionEstimadaMinutos: 25, incluyePolichado: false } });
+    const pkgConPolichado = await prisma.package.findFirst({ where: { incluyePolichado: true } }) ||
+      await prisma.package.create({ data: { nombre: 'Test Polichado', descripcion: 'Con polichado', precio: 45000, duracionEstimadaMinutos: 265, incluyePolichado: true } });
+
+    // 12a. Order WITHOUT polichado: PENDIENTE -> REMOJO -> LAVADO -> SECADO -> LISTO (10, 30, 55, 80, 100)
+    const vNoPol = await prisma.vehicle.create({
+      data: {
+        placa: `NPO-${Date.now().toString().slice(-3)}`,
+        marca: 'Kia',
+        modelo: 'Picanto',
+        color: 'Blanco',
+        ownerName: 'Sin Polichado Owner',
+      },
+    });
+    createdVehicleIds.push(vNoPol.id);
+
+    const orderNoPolRes = await makeRequest(
+      'POST',
+      '/api/orders',
+      { vehicleId: vNoPol.id, packageId: pkgSinPolichado.id },
+      operatorHeaders
+    );
+    assert.strictEqual(orderNoPolRes.status, 201);
+    let orderNoPol = orderNoPolRes.body;
+    createdOrderIds.push(orderNoPol.id);
+    assert.strictEqual(orderNoPol.faseActual, 'PENDIENTE');
+    assert.strictEqual(orderNoPol.porcentajeProgreso, 10);
+
+    const expectedNoPolSteps = [
+      { phase: 'REMOJO', progress: 30 },
+      { phase: 'LAVADO', progress: 55 },
+      { phase: 'SECADO', progress: 80 },
+      { phase: 'LISTO', progress: 100 },
+    ];
+    for (const step of expectedNoPolSteps) {
+      orderNoPol = await changePhase(orderNoPol.id, null, { source: 'MANUAL' });
+      assert.strictEqual(orderNoPol.faseActual, step.phase);
+      assert.strictEqual(orderNoPol.porcentajeProgreso, step.progress);
+    }
+    console.log('  ✅ Order WITHOUT polichado followed PENDIENTE -> REMOJO -> LAVADO -> SECADO -> LISTO (10, 30, 55, 80, 100).');
+
+    // 12b. Order WITH polichado: PENDIENTE -> REMOJO -> LAVADO -> SECADO -> POLICHADO -> LISTO (10, 25, 45, 65, 85, 100)
+    const vWithPol = await prisma.vehicle.create({
+      data: {
+        placa: `POL-${Date.now().toString().slice(-3)}`,
+        marca: 'BMW',
+        modelo: 'X3',
+        color: 'Negro',
+        ownerName: 'Con Polichado Owner',
+      },
+    });
+    createdVehicleIds.push(vWithPol.id);
+
+    const orderWithPolRes = await makeRequest(
+      'POST',
+      '/api/orders',
+      { vehicleId: vWithPol.id, packageId: pkgConPolichado.id },
+      operatorHeaders
+    );
+    assert.strictEqual(orderWithPolRes.status, 201);
+    let orderWithPol = orderWithPolRes.body;
+    createdOrderIds.push(orderWithPol.id);
+    assert.strictEqual(orderWithPol.faseActual, 'PENDIENTE');
+    assert.strictEqual(orderWithPol.porcentajeProgreso, 10);
+
+    const expectedWithPolSteps = [
+      { phase: 'REMOJO', progress: 25 },
+      { phase: 'LAVADO', progress: 45 },
+      { phase: 'SECADO', progress: 65 },
+      { phase: 'POLICHADO', progress: 85 },
+      { phase: 'LISTO', progress: 100 },
+    ];
+    for (const step of expectedWithPolSteps) {
+      orderWithPol = await changePhase(orderWithPol.id, null, { source: 'MANUAL' });
+      assert.strictEqual(orderWithPol.faseActual, step.phase);
+      assert.strictEqual(orderWithPol.porcentajeProgreso, step.progress);
+    }
+    console.log('  ✅ Order WITH polichado followed PENDIENTE -> REMOJO -> LAVADO -> SECADO -> POLICHADO -> LISTO (10, 25, 45, 65, 85, 100).');
+
+    // =========================================================================
+    // 13. Realistic minimum phase duration (70% rule for AUTO vs MANUAL)
+    // =========================================================================
+    console.log('\n13. Testing realistic minimum phase duration (70% rule for AUTO vs MANUAL)...');
+    const vTime = await prisma.vehicle.create({
+      data: {
+        placa: `TIM-${Date.now().toString().slice(-3)}`,
+        marca: 'Audi',
+        modelo: 'A4',
+        color: 'Plata',
+        ownerName: 'Timing Test Owner',
+      },
+    });
+    createdVehicleIds.push(vTime.id);
+
+    const orderTimeRes = await makeRequest(
+      'POST',
+      '/api/orders',
+      { vehicleId: vTime.id, packageId: pkgConPolichado.id },
+      operatorHeaders
+    );
+    const orderTime = orderTimeRes.body;
+    createdOrderIds.push(orderTime.id);
+
+    // Exception 1: PENDIENTE -> REMOJO is always immediate even with source AUTO
+    const baseNow = Date.now();
+    const autoFromPendiente = await changePhase(orderTime.id, null, {
+      source: 'AUTO',
+      now: baseNow,
+      lastPhaseChangeAt: baseNow,
+    });
+    assert.strictEqual(autoFromPendiente.faseActual, 'REMOJO', 'PENDIENTE -> REMOJO must be immediate even for AUTO');
+
+    // Now in REMOJO (estimated duration = 3 minutes = 180,000 ms; 70% = 126,000 ms)
+    const remojoEstMs = getEstimatedDurationForPhase('REMOJO');
+    assert.strictEqual(remojoEstMs, 3 * 60 * 1000);
+
+    // 13a. AUTO advance BEFORE 70% of estimated time (e.g. 60s < 126s) is rejected
+    const rejectedAuto = await changePhase(orderTime.id, null, {
+      source: 'AUTO',
+      now: baseNow + 60 * 1000,
+      lastPhaseChangeAt: baseNow,
+    });
+    assert.strictEqual(rejectedAuto.advanced, false);
+    assert.strictEqual(rejectedAuto.reason, 'MIN_TIME_NOT_REACHED');
+    const dbCheckStillRemojo = await prisma.serviceOrder.findUnique({ where: { id: orderTime.id } });
+    assert.strictEqual(dbCheckStillRemojo.faseActual, 'REMOJO');
+    console.log('  ✅ AUTO advance before 70% of estimated time is rejected (MIN_TIME_NOT_REACHED).');
+
+    // Also verify simulatedProvider.analyzeImage respects the 70% rule
+    const simBefore70 = await simulatedProvider.analyzeImage({
+      expectedPlate: vTime.placa,
+      currentPhase: 'REMOJO',
+      incluyePolichado: true,
+      lastPhaseChangeAt: baseNow,
+      now: baseNow + 60 * 1000,
+    });
+    assert.strictEqual(simBefore70.phase, 'REMOJO', 'Simulated provider must NOT advance before 70% time');
+    assert.strictEqual(simBefore70.advanced, false);
+    assert.strictEqual(simBefore70.reason, 'MIN_TIME_NOT_REACHED');
+
+    // 13b. AUTO advance AFTER 70% of estimated time (e.g. 130s >= 126s) is accepted
+    const acceptedAuto = await changePhase(orderTime.id, null, {
+      source: 'AUTO',
+      now: baseNow + 130 * 1000,
+      lastPhaseChangeAt: baseNow,
+    });
+    assert.strictEqual(acceptedAuto.faseActual, 'LAVADO');
+    assert.strictEqual(acceptedAuto.porcentajeProgreso, 45);
+    console.log('  ✅ AUTO advance after 70% of estimated time is accepted.');
+
+    // 13c. MANUAL advance is ALWAYS accepted immediately regardless of elapsed time (e.g. 1s in LAVADO)
+    const manualImmediate = await changePhase(orderTime.id, null, {
+      source: 'MANUAL',
+      now: baseNow + 131 * 1000,
+      lastPhaseChangeAt: baseNow + 130 * 1000,
+    });
+    assert.strictEqual(manualImmediate.faseActual, 'SECADO');
+    assert.strictEqual(manualImmediate.porcentajeProgreso, 65);
+    console.log('  ✅ MANUAL advance is always accepted immediately regardless of elapsed time.');
+
     console.log('\n🎉 All Phase 21 Phases & Ready Flow tests passed successfully!');
   } finally {
     // Teardown test artifacts

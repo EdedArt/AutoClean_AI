@@ -1,6 +1,11 @@
 const prisma = require('../config/db');
 const AppError = require('../utils/AppError');
-const { getNextPhase, PHASE_LABELS } = require('./simulation.service');
+const {
+  getNextPhase,
+  PHASE_LABELS,
+  PHASE_PROGRESS_MAP,
+  doesOrderIncludePolichado,
+} = require('./simulation.service');
 const { changePhase } = require('./orderPhase.service');
 const { calculateDeliveryPrediction } = require('./prediction.service');
 const { getPrismaPagination, buildPaginatedResponse } = require('../utils/pagination');
@@ -128,8 +133,9 @@ const createServiceOrder = async ({ vehicleId, packageId, bayId }) => {
     }
 
     // Verify package exists if provided
+    let packageExists = null;
     if (packageId) {
-      const packageExists = await tx.package.findUnique({
+      packageExists = await tx.package.findUnique({
         where: { id: packageId },
       });
       if (!packageExists) {
@@ -154,13 +160,15 @@ const createServiceOrder = async ({ vehicleId, packageId, bayId }) => {
       });
     }
 
+    const initialProgress = PHASE_PROGRESS_MAP(doesOrderIncludePolichado(packageExists)).PENDIENTE;
+
     const order = await tx.serviceOrder.create({
       data: {
         vehicleId,
         packageId: packageId || null,
         bayId: bayId || null,
         faseActual: 'PENDIENTE',
-        porcentajeProgreso: 10,
+        porcentajeProgreso: initialProgress,
         listoParaLavar: false,
       },
       include: {
@@ -174,7 +182,7 @@ const createServiceOrder = async ({ vehicleId, packageId, bayId }) => {
       data: {
         orderId: order.id,
         fase: 'PENDIENTE',
-        progreso: 10,
+        progreso: initialProgress,
         source: 'MANUAL',
       },
     });
@@ -269,6 +277,9 @@ const trackOrderByPlaca = async (placa, user) => {
 const simulateAdvanceOrder = async (id) => {
   const order = await prisma.serviceOrder.findUnique({
     where: { id: Number(id) },
+    include: {
+      package: true,
+    },
   });
 
   if (!order) {
@@ -285,7 +296,7 @@ const simulateAdvanceOrder = async (id) => {
   }
 
   const currentPhase = order.faseActual;
-  const nextPhase = getNextPhase(currentPhase);
+  const nextPhase = getNextPhase(currentPhase, order);
 
   if (!nextPhase) {
     console.warn(`[DEMO] Order #${id} force-advance rejected: Order is already completed.`);

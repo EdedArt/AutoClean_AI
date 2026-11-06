@@ -5,7 +5,7 @@ info:
   description: >-
     REST API for the AutoClean AI smart car wash management system.
     Includes full vehicle lifecycle tracking, bay assignment, simulated car wash phases
-    (PENDIENTE, REMOJO, LAVADO, SECADO, LISTO) with an automated background scheduler,
+    (PENDIENTE, REMOJO, LAVADO, SECADO, POLICHADO, LISTO) with an automated background scheduler,
     manual demo controls for presentations, deterministic AI delivery time predictions,
     and photographic evidence upload per service phase.
 servers:
@@ -715,7 +715,7 @@ paths:
       tags:
         - Simulation
       summary: Force advance order to next phase
-      description: Demo control to immediately force an active order to its next phase (PENDIENTE -> REMOJO -> LAVADO -> SECADO -> LISTO), updating progress percentage and resetting the simulation timer.
+      description: Demo control to immediately force an active order to its next phase (PENDIENTE -> REMOJO -> LAVADO -> SECADO -> [POLICHADO ->] LISTO), updating progress percentage and resetting the simulation timer.
       parameters:
         - name: id
           in: path
@@ -1210,6 +1210,7 @@ components:
         - REMOJO
         - LAVADO
         - SECADO
+        - POLICHADO
         - LISTO
       description: Canonical car wash service phases
       example: PENDIENTE
@@ -1297,6 +1298,16 @@ components:
           format: float
           nullable: true
           example: 35000.0
+        duracionEstimadaMinutos:
+          type: integer
+          nullable: true
+          example: 25
+          description: Estimated total duration of the package in minutes
+        incluyePolichado:
+          type: boolean
+          default: false
+          example: false
+          description: Whether the service package includes the POLICHADO phase
 
     Prediction:
       type: object
@@ -1922,7 +1933,7 @@ components:
           example: Rojo
         fase:
           type: string
-          enum: [PENDIENTE, REMOJO, LAVADO, SECADO, LISTO]
+          enum: [PENDIENTE, REMOJO, LAVADO, SECADO, POLICHADO, LISTO]
           example: LAVADO
         porcentajeProgreso:
           type: integer

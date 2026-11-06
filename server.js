@@ -144,6 +144,13 @@ const simulationInterval = setInterval(async () => {
         listoParaLavar: true,
         deliveredAt: null,
       },
+      include: {
+        package: true,
+        phaseEvents: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
+      },
     });
 
     for (const order of activeOrders) {

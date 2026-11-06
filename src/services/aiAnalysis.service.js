@@ -2,7 +2,7 @@ const fs = require('fs');
 const prisma = require('../config/db');
 const env = require('../config/env');
 const AppError = require('../utils/AppError');
-const { VALID_PHASES } = require('./simulation.service');
+const { VALID_PHASES, doesOrderIncludePolichado } = require('./simulation.service');
 const { changePhase } = require('./orderPhase.service');
 const aiService = require('./ai');
 
@@ -54,6 +54,10 @@ const analyzeOrderImage = async ({ orderId: rawOrderId, file, saveEvidence: rawS
       vehicle: true,
       package: true,
       bay: true,
+      phaseEvents: {
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+      },
     },
   });
 
@@ -87,6 +91,23 @@ const analyzeOrderImage = async ({ orderId: rawOrderId, file, saveEvidence: rawS
     throw AppError.internal('Failed to read uploaded image file');
   }
 
+  const incluyePolichado = doesOrderIncludePolichado(order);
+  const matchingPhaseEvent =
+    order.phaseEvents && order.phaseEvents.find((e) => e.fase === order.faseActual);
+  const latestPhaseEvent =
+    matchingPhaseEvent || (order.phaseEvents && order.phaseEvents[0]) || null;
+  let lastPhaseChangeAt = order.updatedAt || order.createdAt;
+  if (latestPhaseEvent && order.updatedAt) {
+    lastPhaseChangeAt = new Date(
+      Math.min(
+        new Date(latestPhaseEvent.createdAt).getTime(),
+        new Date(order.updatedAt).getTime()
+      )
+    );
+  } else if (latestPhaseEvent) {
+    lastPhaseChangeAt = latestPhaseEvent.createdAt;
+  }
+
   let aiResult;
   try {
     aiResult = await aiService.analyze({
@@ -96,6 +117,9 @@ const analyzeOrderImage = async ({ orderId: rawOrderId, file, saveEvidence: rawS
       currentPhase: order.faseActual,
       orderId: order.id,
       scenario,
+      incluyePolichado,
+      lastPhaseChangeAt,
+      order,
     });
   } catch (aiErr) {
     safeUnlink(file.path);
@@ -246,9 +270,18 @@ const analyzeOrderImage = async ({ orderId: rawOrderId, file, saveEvidence: rawS
 
   if (detectedIdx > currentIdx) {
     // Later phase: advance automatically via changePhase with source "AI"
-    targetOrder = await changePhase(order.id, aiResult.result.phase, { source: 'AI' });
-    changed = true;
-    outcome = 'APPLIED';
+    const phaseChangeResult = await changePhase(order.id, aiResult.result.phase, {
+      source: 'AI',
+      lastPhaseChangeAt,
+    });
+    if (phaseChangeResult && phaseChangeResult.advanced === false) {
+      changed = false;
+      outcome = 'UNCHANGED';
+    } else {
+      targetOrder = phaseChangeResult;
+      changed = true;
+      outcome = 'APPLIED';
+    }
   } else if (detectedIdx < currentIdx) {
     // Earlier phase: do NOT move backwards
     regression = true;
