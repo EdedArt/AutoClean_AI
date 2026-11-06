@@ -21,6 +21,9 @@ async function runTests() {
   assert.strictEqual(getNextPhase('REMOJO'), 'LAVADO');
   assert.strictEqual(getNextPhase('LAVADO'), 'SECADO');
   assert.strictEqual(getNextPhase('SECADO'), 'LISTO');
+  assert.strictEqual(getNextPhase('SECADO', { package: { incluyePolichado: false } }), 'LISTO');
+  assert.strictEqual(getNextPhase('SECADO', { package: { incluyePolichado: true } }), 'POLICHADO');
+  assert.strictEqual(getNextPhase('POLICHADO', { package: { incluyePolichado: true } }), 'LISTO');
   assert.strictEqual(getNextPhase('LISTO'), null);
   assert.strictEqual(getNextPhase('UNKNOWN_PHASE'), null);
   console.log('  ✅ getNextPhase works as expected.\n');
@@ -32,6 +35,10 @@ async function runTests() {
   assert.strictEqual(PHASE_PROGRESS_MAP.LAVADO, 55);
   assert.strictEqual(PHASE_PROGRESS_MAP.SECADO, 80);
   assert.strictEqual(PHASE_PROGRESS_MAP.LISTO, 100);
+  const mapNoPolichado = PHASE_PROGRESS_MAP(false);
+  assert.deepStrictEqual(mapNoPolichado, { PENDIENTE: 10, REMOJO: 30, LAVADO: 55, SECADO: 80, LISTO: 100 });
+  const mapWithPolichado = PHASE_PROGRESS_MAP(true);
+  assert.deepStrictEqual(mapWithPolichado, { PENDIENTE: 10, REMOJO: 25, LAVADO: 45, SECADO: 65, POLICHADO: 85, LISTO: 100 });
   console.log('  ✅ Progress percentages match requirements (10%, 30%, 55%, 80%, 100%).\n');
 
   // Test 3: Environment variable duration parsing

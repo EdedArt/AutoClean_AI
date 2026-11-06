@@ -71,6 +71,12 @@ async function runPredictionTests() {
   assert.strictEqual(getRemainingPhasesCount('SECADO'), 1);
   assert.strictEqual(getRemainingPhasesCount('LISTO'), 0);
   assert.strictEqual(getRemainingPhasesCount('UNKNOWN'), 0);
+  assert.strictEqual(getRemainingPhasesCount('PENDIENTE', true), 5);
+  assert.strictEqual(getRemainingPhasesCount('REMOJO', { package: { incluyePolichado: true } }), 4);
+  assert.strictEqual(getRemainingPhasesCount('LAVADO', true), 3);
+  assert.strictEqual(getRemainingPhasesCount('SECADO', true), 2);
+  assert.strictEqual(getRemainingPhasesCount('POLICHADO', true), 1);
+  assert.strictEqual(getRemainingPhasesCount('LISTO', true), 0);
   console.log('  ✅ getRemainingPhasesCount returns correct counts for all phases.');
 
   // 2. Deterministic accuracy percentage

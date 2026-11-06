@@ -1,16 +1,26 @@
 const AppError = require('../utils/AppError');
+const { doesOrderIncludePolichado } = require('./simulation.service');
 
 const DEFAULT_PHASE_ETA_MINUTES = {
   PENDIENTE: 10,
   REMOJO: 5,
   LAVADO: 15,
   SECADO: 10,
+  POLICHADO: 240,
   LISTO: 0,
 };
 
 const QUEUE_WAIT_PER_ORDER_MINUTES = 15;
 const MAX_QUEUE_WAIT_MINUTES = 120;
 const ORDERED_PHASES = ['PENDIENTE', 'REMOJO', 'LAVADO', 'SECADO', 'LISTO'];
+const ORDERED_PHASES_WITH_POLICHADO = [
+  'PENDIENTE',
+  'REMOJO',
+  'LAVADO',
+  'SECADO',
+  'POLICHADO',
+  'LISTO',
+];
 
 /**
  * Reads configured phase ETA minutes from env or falls back to defaults.
@@ -53,10 +63,15 @@ const formatEtaDuration = (minutes) => {
 
 /**
  * Pure calculation of ETA fields based on order parameters.
+ * Adds POLICHADO (240 min) ONLY when the order's package has incluyePolichado = true.
  *
  * @param {object} params
  * @param {string} params.faseActual - Current phase of the order
  * @param {boolean} [params.listoParaLavar=true] - Whether the order is ready to wash
+ * @param {boolean} [params.incluyePolichado=false] - Whether the package includes polichado
+ * @param {object} [params.package] - Optional package object
+ * @param {object} [params.paquete] - Optional Spanish alias package object
+ * @param {object} [params.order] - Optional order object
  * @param {Date|string|number} [params.referenceTime] - Timestamp of latest phase transition
  * @param {Date|string|number} [params.createdAt] - Order creation timestamp
  * @param {Date|string|null} [params.deliveredAt=null] - Delivery timestamp if delivered
@@ -68,6 +83,10 @@ const formatEtaDuration = (minutes) => {
 const calculateEta = ({
   faseActual,
   listoParaLavar = true,
+  incluyePolichado = false,
+  package: pkg,
+  paquete,
+  order,
   referenceTime,
   createdAt,
   deliveredAt = null,
@@ -88,8 +107,17 @@ const calculateEta = ({
     };
   }
 
-  const currentIdx = ORDERED_PHASES.indexOf(faseActual);
-  const phasesFromCurrent = currentIdx >= 0 ? ORDERED_PHASES.slice(currentIdx) : ['LISTO'];
+  const hasPolichado = Boolean(
+    incluyePolichado ||
+      doesOrderIncludePolichado(pkg) ||
+      doesOrderIncludePolichado(paquete) ||
+      doesOrderIncludePolichado(order) ||
+      faseActual === 'POLICHADO'
+  );
+
+  const sequence = hasPolichado ? ORDERED_PHASES_WITH_POLICHADO : ORDERED_PHASES;
+  const currentIdx = sequence.indexOf(faseActual);
+  const phasesFromCurrent = currentIdx >= 0 ? sequence.slice(currentIdx) : ['LISTO'];
 
   const sumPhaseMinutes = phasesFromCurrent.reduce(
     (acc, phase) => acc + (phaseMinutes[phase] ?? DEFAULT_PHASE_ETA_MINUTES[phase] ?? 0),
@@ -134,13 +162,14 @@ const calculateEta = ({
 };
 
 /**
- * Computes ETA for a database order, resolving latest PhaseEvent and queue count as needed.
+ * Computes ETA for a database order, resolving latest PhaseEvent, package polichado flag, and queue count as needed.
  *
  * @param {object} order
  * @param {object} [options]
  * @param {Date} [options.now]
  * @param {number} [options.earlierActiveOrdersCount]
  * @param {Date} [options.referenceTime]
+ * @param {boolean} [options.incluyePolichado]
  * @returns {Promise<{ etaMinutes: number, etaLabel: string, estimatedReadyAt: string|null, deliveredAt: string|null }>}
  */
 const computeOrderEta = async (order, options = {}) => {
@@ -154,6 +183,26 @@ const computeOrderEta = async (order, options = {}) => {
       deliveredAt: order.deliveredAt,
       now,
     });
+  }
+
+  // Resolve whether the order's package includes polichado
+  let incluyePolichado;
+  if (options.incluyePolichado !== undefined) {
+    incluyePolichado = Boolean(options.incluyePolichado);
+  } else if (
+    typeof order.incluyePolichado === 'boolean' ||
+    order.package !== undefined ||
+    order.paquete !== undefined
+  ) {
+    incluyePolichado = doesOrderIncludePolichado(order);
+  } else if (order.packageId) {
+    const prisma = require('../config/db');
+    const pkg = await prisma.package.findUnique({
+      where: { id: order.packageId },
+    });
+    incluyePolichado = Boolean(pkg?.incluyePolichado);
+  } else {
+    incluyePolichado = false;
   }
 
   // Determine reference time (latest PhaseEvent createdAt, fallback createdAt)
@@ -197,6 +246,7 @@ const computeOrderEta = async (order, options = {}) => {
   return calculateEta({
     faseActual: order.faseActual,
     listoParaLavar: order.listoParaLavar,
+    incluyePolichado,
     referenceTime,
     createdAt: order.createdAt,
     deliveredAt: order.deliveredAt,
@@ -227,6 +277,7 @@ module.exports = {
   QUEUE_WAIT_PER_ORDER_MINUTES,
   MAX_QUEUE_WAIT_MINUTES,
   ORDERED_PHASES,
+  ORDERED_PHASES_WITH_POLICHADO,
   getPhaseEtaMinutes,
   formatEtaDuration,
   calculateEta,

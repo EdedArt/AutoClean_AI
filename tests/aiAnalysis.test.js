@@ -130,7 +130,8 @@ async function runAiAnalysisTests() {
           faseActual: currentPhase,
           porcentajeProgreso: currentPhase === 'PENDIENTE' ? 10 : 80,
           listoParaLavar: listo,
-          readyAt: listo ? new Date() : null,
+          readyAt: listo ? new Date(Date.now() - 15 * 60 * 1000) : null,
+          updatedAt: currentPhase === 'PENDIENTE' ? new Date() : new Date(Date.now() - 15 * 60 * 1000),
         },
         include: { vehicle: true, bay: true },
       });

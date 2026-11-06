@@ -166,6 +166,18 @@ async function runDeliveryTests() {
   assert.strictEqual(fullWash.estimatedReadyAt, new Date('2026-10-24T12:40:00.000Z').toISOString());
   assert.strictEqual(fullWash.deliveredAt, null);
   console.log('  ✅ Full wash from PENDIENTE ready calculates 40 min with label "Aprox. 40 min".');
+  // 2b. Full wash from PENDIENTE ready with incluyePolichado (+240 min)
+  const fullWashPolichado = calculateEta({
+    faseActual: 'PENDIENTE',
+    listoParaLavar: true,
+    incluyePolichado: true,
+    referenceTime: now,
+    createdAt: now,
+    now,
+  });
+  // 40 + 240 = 280 min (4 h 40 min)
+  assert.strictEqual(fullWashPolichado.etaMinutes, 280);
+  assert.strictEqual(fullWashPolichado.etaLabel, 'Aprox. 4 h 40 min');
 
   // 3. Mid-phase elapsed time
   console.log('3. Testing mid-phase elapsed time deduction...');

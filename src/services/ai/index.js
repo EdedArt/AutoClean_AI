@@ -2,6 +2,7 @@ const env = require('../../config/env');
 const AppError = require('../../utils/AppError');
 const geminiProvider = require('./geminiProvider');
 const simulatedProvider = require('./simulatedProvider');
+const { doesOrderIncludePolichado } = require('../simulation.service');
 
 let customProvider = null;
 
@@ -73,6 +74,9 @@ function getAiStatus() {
  * @param {string} [params.currentPhase="PENDIENTE"]
  * @param {number|string} [params.orderId=1]
  * @param {string} [params.scenario]
+ * @param {boolean} [params.incluyePolichado]
+ * @param {object} [params.order]
+ * @param {Date|string|number} [params.lastPhaseChangeAt]
  * @returns {Promise<{
  *   provider: "gemini"|"simulated",
  *   model: string,
@@ -90,6 +94,9 @@ function getAiStatus() {
  */
 async function analyze(params) {
   const startTime = Date.now();
+  const incluyePolichado = Boolean(
+    params?.incluyePolichado || doesOrderIncludePolichado(params?.order)
+  );
 
   const effectiveProvider = customProvider?.name || resolveEffectiveProvider();
   const activeGeminiProvider = customProvider?.name === 'gemini' ? customProvider : geminiProvider;
@@ -101,6 +108,7 @@ async function analyze(params) {
       const { decidePhase } = require('./phaseRules');
       const derived = decidePhase(result.observations, {
         currentPhase: params.currentPhase,
+        incluyePolichado,
         modelPhase: result.phase,
         modelConfidence: result.phaseConfidence,
       });
@@ -127,6 +135,7 @@ async function analyze(params) {
         const { decidePhase } = require('./phaseRules');
         const derived = decidePhase(result.observations, {
           currentPhase: params.currentPhase,
+          incluyePolichado,
           modelPhase: result.phase,
           modelConfidence: result.phaseConfidence,
         });

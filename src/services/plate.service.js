@@ -57,6 +57,7 @@ const findActivePlateView = async (placa) => {
       serviceOrders: {
         where: { deliveredAt: null },
         include: {
+          package: true,
           phaseEvents: { orderBy: { createdAt: 'desc' }, take: 1 },
         },
         take: 1,

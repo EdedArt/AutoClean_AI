@@ -1,13 +1,15 @@
 const { GoogleGenAI, Type } = require('@google/genai');
 const { z } = require('zod');
 const env = require('../../config/env');
-const { VALID_PHASES } = require('../simulation.service');
-const { decidePhase, derivePhase } = require('./phaseRules');
+const { VALID_PHASES, doesOrderIncludePolichado } = require('../simulation.service');
+const { decidePhase } = require('./phaseRules');
 
 const observationsSchema = z.object({
   soapFoamVisible: z.boolean(),
   waterOnCar: z.boolean(),
   dryingInProgress: z.boolean(),
+  polishingInProgress: z.boolean().optional().default(false),
+  waxOrPolishVisible: z.boolean().optional().default(false),
   visibleDirt: z.enum(['none', 'light', 'heavy']),
   cleanAndGlossy: z.boolean(),
   observationNotes: z.string().default(''),
@@ -39,19 +41,22 @@ const SYSTEM_INSTRUCTION = `You are a vehicle wash phase and license plate analy
 Analyze the provided camera frame of a vehicle in the wash bay.
 
 Analyze physical visual indicators objectively and prefer visible evidence over assumptions:
-1. soapFoamVisible: True ONLY if white soap foam, shampoo suds, or active lather is visibly covering vehicle surfaces.
+1. soapFoamVisible: True ONLY if white soap foam, shampoo suds, or active lather with bubbles is visibly covering wet vehicle surfaces. Do NOT confuse with opaque white polishing paste/wax on a dry car.
 2. waterOnCar: True if the vehicle surface is visibly wet, dripping, being sprayed with water, or covered in water droplets.
-3. dryingInProgress: True if personnel are actively wiping with microfiber towels/chamois, using air blowers, or if the car is in a drying bay post-rinse without foam.
-4. visibleDirt: True assessment of dirt/dust/mud/road grime: "none" (paint is clean), "light" (dust/light spots), or "heavy" (thick mud, stains, heavy grime).
-5. cleanAndGlossy: True ONLY if paint looks clean, uniform, shiny, reflective, and completely free of dirt.
-6. observationNotes: Concise factual summary of what is physically visible.
+3. dryingInProgress: True if personnel are actively wiping water with microfiber towels/chamois, using air blowers, or if the car is damp in a drying bay post-rinse without foam.
+4. polishingInProgress: True if the car is DRY and personnel are rubbing/buffing small zones with a microfiber cloth or rotary polisher machine.
+5. waxOrPolishVisible: True if opaque white paste/wax compound (NOT airy soap foam with bubbles) is applied in small localized zones on a dry vehicle surface.
+6. visibleDirt: True assessment of dirt/dust/mud/road grime: "none" (paint is clean), "light" (dust/light spots), or "heavy" (thick mud, stains, heavy grime).
+7. cleanAndGlossy: True ONLY if paint looks clean, uniform, shiny, reflective, and completely free of dirt and free of polishing paste residue.
+8. observationNotes: Concise factual summary of what is physically visible.
 
 Visual Wash Phase Guidelines (secondary assessment):
 - PENDIENTE: The car is dry and dirty waiting in the bay, with no water or foam applied.
 - REMOJO: The car is being wetted or pre-rinsed with water, with no soap foam yet.
-- LAVADO: The car is covered in soap foam, shampoo, or actively being scrubbed.
+- LAVADO: The car is wet and covered in airy soap foam with bubbles, shampoo, or actively being scrubbed with water running.
 - SECADO: The soap has been rinsed away; the car is wet or actively being dried with towels, air blowers, or microfiber cloths.
-- LISTO: The wash cycle is complete; the car is clean, dry, shiny, and ready for exit.
+- POLICHADO: The car is DRY with opaque white wax/paste compound applied in small zones and an operator buffing with a cloth or rotary polisher.
+- LISTO: The wash (and polishing, if applicable) cycle is complete; the car is clean, dry, shiny, free of paste residue, and ready for exit.
 
 License Plate Instructions:
 - Identify and read the vehicle license plate (standard Colombian format: three letters and three digits, e.g. "ABC-123" or "ABC123").
@@ -76,7 +81,7 @@ const RESPONSE_SCHEMA = {
       properties: {
         soapFoamVisible: {
           type: Type.BOOLEAN,
-          description: 'True if soap foam, suds, or lather is visible on the vehicle',
+          description: 'True if airy soap foam, suds, or lather is visible on the wet vehicle',
         },
         waterOnCar: {
           type: Type.BOOLEAN,
@@ -84,7 +89,15 @@ const RESPONSE_SCHEMA = {
         },
         dryingInProgress: {
           type: Type.BOOLEAN,
-          description: 'True if wiping with towels, air drying, or damp after rinsing with no foam',
+          description: 'True if wiping water with towels, air drying, or damp after rinsing with no foam',
+        },
+        polishingInProgress: {
+          type: Type.BOOLEAN,
+          description: 'True if car is dry and operator is buffing/polishing with a cloth or rotary polisher',
+        },
+        waxOrPolishVisible: {
+          type: Type.BOOLEAN,
+          description: 'True if opaque white wax/paste compound (not soap foam) is visible on dry car surface',
         },
         visibleDirt: {
           type: Type.STRING,
@@ -93,7 +106,7 @@ const RESPONSE_SCHEMA = {
         },
         cleanAndGlossy: {
           type: Type.BOOLEAN,
-          description: 'True if paint looks clean, uniform, and shiny',
+          description: 'True if paint looks clean, uniform, shiny, and free of paste residue',
         },
         observationNotes: {
           type: Type.STRING,
@@ -112,7 +125,7 @@ const RESPONSE_SCHEMA = {
     phase: {
       type: Type.STRING,
       enum: VALID_PHASES,
-      description: 'The classified wash phase: PENDIENTE, REMOJO, LAVADO, SECADO, or LISTO',
+      description: 'The classified wash phase: PENDIENTE, REMOJO, LAVADO, SECADO, POLICHADO, or LISTO',
     },
     phaseConfidence: {
       type: Type.NUMBER,
@@ -176,6 +189,9 @@ function sanitizeError(err) {
  * @param {Buffer} params.buffer - Image buffer
  * @param {string} [params.mimeType="image/jpeg"] - Image MIME type
  * @param {string} [params.expectedPlate] - Optional expected license plate
+ * @param {string} [params.currentPhase] - Current phase of the service order
+ * @param {boolean} [params.incluyePolichado] - Whether the package includes polichado
+ * @param {object} [params.order] - Optional service order object
  * @returns {Promise<{
  *   plateDetected: string|null,
  *   plateConfidence: number,
@@ -185,11 +201,19 @@ function sanitizeError(err) {
  *   notes: string
  * }>}
  */
-async function analyzeImage({ buffer, mimeType = 'image/jpeg', expectedPlate, currentPhase }) {
+async function analyzeImage({
+  buffer,
+  mimeType = 'image/jpeg',
+  expectedPlate,
+  currentPhase,
+  incluyePolichado: rawIncluyePolichado,
+  order,
+}) {
   if (!buffer || !Buffer.isBuffer(buffer)) {
     throw new Error('Image buffer is required for Gemini vision analysis');
   }
 
+  const incluyePolichado = Boolean(rawIncluyePolichado || doesOrderIncludePolichado(order));
   const client = getClient();
   const modelName = env.GEMINI_MODEL || 'gemini-3.1-flash-lite';
   const timeoutMs = Math.max(env.GEMINI_TIMEOUT_MS || 20000, 35000);
@@ -274,6 +298,7 @@ async function analyzeImage({ buffer, mimeType = 'image/jpeg', expectedPlate, cu
       const raw = validationResult.data;
       const derived = decidePhase(raw.observations, {
         currentPhase,
+        incluyePolichado,
         modelPhase: raw.phase,
         modelConfidence: raw.phaseConfidence,
       });

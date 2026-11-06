@@ -2,9 +2,9 @@ const { z } = require('zod');
 
 const analyzeBodySchema = z.object({
   scenario: z
-    .enum(['wrong_vehicle', 'unreadable', 'regression', 'low_confidence'], {
+    .enum(['wrong_vehicle', 'unreadable', 'regression', 'low_confidence', 'polichado'], {
       errorMap: () => ({
-        message: 'Scenario must be one of: wrong_vehicle, unreadable, regression, low_confidence',
+        message: 'Scenario must be one of: wrong_vehicle, unreadable, regression, low_confidence, polichado',
       }),
     })
     .optional(),
