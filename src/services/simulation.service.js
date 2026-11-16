@@ -99,7 +99,6 @@ const getPhaseCatalog = (orderOrIncluyePolichado = false) => {
 const PHASE_ESTIMATED_DURATION_MINUTES = {
   PENDIENTE: 0,
   REMOJO: 3,
-  ENJABONADO: 8,
   LAVADO: 10,
   SECADO: 7,
   POLICHADO: 240,

@@ -2,7 +2,8 @@ const fs = require('fs');
 const prisma = require('../config/db');
 const env = require('../config/env');
 const AppError = require('../utils/AppError');
-const { VALID_PHASES, doesOrderIncludePolichado } = require('./simulation.service');
+const { doesOrderIncludePolichado } = require('./simulation.service');
+const { evaluatePhaseTransition, AI_OUTCOMES } = require('./ai/phaseRules');
 const { changePhase } = require('./orderPhase.service');
 const aiService = require('./ai');
 
@@ -148,191 +149,98 @@ const analyzeOrderImage = async ({ orderId: rawOrderId, file, saveEvidence: rawS
   const expectedNormalized = normalizePlate(order.vehicle.placa);
   const plateConfidence = Number(aiResult.result.plateConfidence) || 0;
   const phaseConfidence = Number(aiResult.result.phaseConfidence) || 0;
-  const minConfidence = env.AI_MIN_CONFIDENCE || 0.6;
+  const configuredMinConfidence = Number(env.AI_MIN_CONFIDENCE);
+  const minConfidence = Number.isFinite(configuredMinConfidence) ? configuredMinConfidence : 0.6;
+  const detectedPhase = aiResult.result.phase;
 
-  // a) Unreadable license plate or low confidence
+  const auditBase = {
+    orderId: order.id,
+    provider: aiResult.provider,
+    model: aiResult.model,
+    plateDetected: rawDetectedPlate,
+    phaseDetected: detectedPhase,
+    fallbackUsed: aiResult.fallbackUsed,
+    latencyMs: aiResult.latencyMs,
+  };
+
+  // a) Unreadable license plate or low plate confidence
   if (!rawDetectedPlate || plateConfidence < minConfidence) {
     safeUnlink(file.path);
-
     await prisma.aiAnalysis.create({
-      data: {
-        orderId: order.id,
-        provider: aiResult.provider,
-        model: aiResult.model,
-        plateDetected: rawDetectedPlate,
-        plateMatched: false,
-        phaseDetected: aiResult.result.phase,
-        confidence: plateConfidence,
-        outcome: 'PLATE_UNREADABLE',
-        fallbackUsed: aiResult.fallbackUsed,
-        latencyMs: aiResult.latencyMs,
-      },
+      data: { ...auditBase, plateMatched: false, confidence: plateConfidence, outcome: 'PLATE_UNREADABLE' },
     });
-
-    throw AppError.unprocessable('Unable to read license plate with sufficient confidence', 'PLATE_UNREADABLE');
+    throw new AppError(
+      'Unable to read license plate with sufficient confidence',
+      422,
+      'PLATE_UNREADABLE',
+      {
+        outcome: AI_OUTCOMES.PLATE_UNREADABLE,
+        detected: rawDetectedPlate || null,
+        confidence: plateConfidence,
+        minConfidence,
+      }
+    );
   }
 
   // b) Wrong vehicle / plate mismatch
   if (detectedNormalized !== expectedNormalized) {
     safeUnlink(file.path);
-
     await prisma.aiAnalysis.create({
-      data: {
-        orderId: order.id,
-        provider: aiResult.provider,
-        model: aiResult.model,
-        plateDetected: rawDetectedPlate,
-        plateMatched: false,
-        phaseDetected: aiResult.result.phase,
-        confidence: plateConfidence,
-        outcome: 'WRONG_VEHICLE',
-        fallbackUsed: aiResult.fallbackUsed,
-        latencyMs: aiResult.latencyMs,
-      },
+      data: { ...auditBase, plateMatched: false, confidence: plateConfidence, outcome: 'WRONG_VEHICLE' },
     });
-
     throw new AppError(
       'Wrong vehicle: the plate in the image does not match this order',
       409,
       'WRONG_VEHICLE',
-      { detected: rawDetectedPlate, expected: order.vehicle.placa }
+      {
+        outcome: AI_OUTCOMES.PLATE_MISMATCH,
+        detected: rawDetectedPlate,
+        expected: order.vehicle.placa,
+        confidence: plateConfidence,
+      }
     );
   }
 
-  // c) Plate matched, but phaseConfidence < AI_MIN_CONFIDENCE
-  if (phaseConfidence < minConfidence) {
-    let evidenceRecord = null;
-    if (saveEvidence && file) {
-      const relativeUrl = `/evidence/${file.filename}`;
-      evidenceRecord = await prisma.evidence.create({
-        data: {
-          url: relativeUrl,
-          etapa: order.faseActual,
-          serviceOrderId: order.id,
-        },
-      });
-    } else {
-      safeUnlink(file.path);
-    }
+  // c) Plate matched: decide the transition (confidence, package, direction).
+  // The photo is operator-initiated, so the 70% minimum-time rule does NOT apply here
+  // (it only governs SIMULATION/AUTO advances): elapsedMs is intentionally not passed.
+  const decision = evaluatePhaseTransition({
+    currentPhase: order.faseActual,
+    detectedPhase,
+    confidence: phaseConfidence,
+    minConfidence,
+    incluyePolichado,
+  });
 
-    await prisma.aiAnalysis.create({
-      data: {
-        orderId: order.id,
-        provider: aiResult.provider,
-        model: aiResult.model,
-        plateDetected: rawDetectedPlate,
-        plateMatched: true,
-        phaseDetected: aiResult.result.phase,
-        confidence: phaseConfidence,
-        outcome: 'LOW_CONFIDENCE',
-        fallbackUsed: aiResult.fallbackUsed,
-        latencyMs: aiResult.latencyMs,
-      },
-    });
-
-    return {
-      provider: aiResult.provider,
-      model: aiResult.model,
-      fallbackUsed: aiResult.fallbackUsed,
-      plate: {
-        detected: rawDetectedPlate,
-        expected: order.vehicle.placa,
-        matched: true,
-        confidence: plateConfidence,
-      },
-      phase: {
-        previous: order.faseActual,
-        detected: aiResult.result.phase,
-        current: order.faseActual,
-        changed: false,
-        regression: false,
-        confidence: phaseConfidence,
-        source: aiResult.result.phaseSource || 'model',
-        reason: aiResult.result.phaseReason || null,
-      },
-      observations: aiResult.result.observations || null,
-      phaseSource: aiResult.result.phaseSource || 'model',
-      phaseReason: aiResult.result.phaseReason || null,
-      dirtLevel: aiResult.result.dirtLevel,
-      notes: aiResult.result.notes,
-      evidenceId: evidenceRecord ? evidenceRecord.id : null,
-      order,
-    };
-  }
-
-  // d) Compare detected phase with current one using VALID_PHASES
-  const currentIdx = VALID_PHASES.indexOf(order.faseActual);
-  const detectedIdx = VALID_PHASES.indexOf(aiResult.result.phase);
+  const outcomeCode = decision.outcome;
   let changed = false;
-  let regression = false;
-  let outcome = 'UNCHANGED';
-  let targetOrder = order;
 
-  if (detectedIdx > currentIdx) {
-    // Later phase: advance automatically via changePhase with source "AI"
-    const phaseChangeResult = await changePhase(order.id, aiResult.result.phase, {
-      source: 'AI',
-      lastPhaseChangeAt,
-    });
-    if (phaseChangeResult && phaseChangeResult.advanced === false) {
-      changed = false;
-      outcome = 'UNCHANGED';
-    } else {
-      targetOrder = phaseChangeResult;
-      changed = true;
-      outcome = 'APPLIED';
-    }
-  } else if (detectedIdx < currentIdx) {
-    // Earlier phase: do NOT move backwards
-    regression = true;
-    outcome = 'REGRESSION_IGNORED';
-  } else {
-    outcome = 'UNCHANGED';
+  if (outcomeCode === AI_OUTCOMES.ADVANCED) {
+    // source 'AI' is immediate in changePhase (same as MANUAL)
+    await changePhase(order.id, decision.to, { source: 'AI' });
+    changed = true;
   }
 
-  // e) If vehicle's nivelSuciedad is null and AI returned dirtLevel, fill it in
-  if (!order.vehicle.nivelSuciedad && aiResult.result.dirtLevel) {
+  const regression = outcomeCode === AI_OUTCOMES.SAME_OR_PREVIOUS_PHASE && decision.regression;
+  const AUDIT_OUTCOME = {
+    [AI_OUTCOMES.ADVANCED]: 'APPLIED',
+    [AI_OUTCOMES.LOW_CONFIDENCE]: 'LOW_CONFIDENCE',
+    [AI_OUTCOMES.PHASE_NOT_IN_PACKAGE]: 'PHASE_NOT_IN_PACKAGE',
+  };
+  const auditOutcome =
+    AUDIT_OUTCOME[outcomeCode] || (regression ? 'REGRESSION_IGNORED' : 'UNCHANGED');
+
+  // d) If vehicle's nivelSuciedad is null and AI returned dirtLevel, fill it in (trusted results only)
+  if (
+    outcomeCode !== AI_OUTCOMES.LOW_CONFIDENCE &&
+    !order.vehicle.nivelSuciedad &&
+    aiResult.result.dirtLevel
+  ) {
     await prisma.vehicle.update({
       where: { id: order.vehicle.id },
       data: { nivelSuciedad: aiResult.result.dirtLevel },
     });
-    if (targetOrder.vehicle) {
-      targetOrder.vehicle.nivelSuciedad = aiResult.result.dirtLevel;
-    }
   }
-
-  // f) Save photo evidence if saveEvidence is true and plate matched
-  let evidenceRecord = null;
-  const resultingPhase = targetOrder.faseActual;
-
-  if (saveEvidence && file) {
-    const relativeUrl = `/evidence/${file.filename}`;
-    evidenceRecord = await prisma.evidence.create({
-      data: {
-        url: relativeUrl,
-        etapa: resultingPhase,
-        serviceOrderId: order.id,
-      },
-    });
-  } else {
-    safeUnlink(file.path);
-  }
-
-  // Record AiAnalysis audit event
-  await prisma.aiAnalysis.create({
-    data: {
-      orderId: order.id,
-      provider: aiResult.provider,
-      model: aiResult.model,
-      plateDetected: rawDetectedPlate,
-      plateMatched: true,
-      phaseDetected: aiResult.result.phase,
-      confidence: phaseConfidence,
-      outcome,
-      fallbackUsed: aiResult.fallbackUsed,
-      latencyMs: aiResult.latencyMs,
-    },
-  });
 
   // Fetch updated order representation with relations
   const finalOrder = await prisma.serviceOrder.findUnique({
@@ -344,10 +252,38 @@ const analyzeOrderImage = async ({ orderId: rawOrderId, file, saveEvidence: rawS
     },
   });
 
+  // e) Save photo evidence (plate matched) tagged with the resulting phase
+  let evidenceRecord = null;
+  if (saveEvidence && file) {
+    evidenceRecord = await prisma.evidence.create({
+      data: {
+        url: `/evidence/${file.filename}`,
+        etapa: finalOrder.faseActual,
+        serviceOrderId: order.id,
+      },
+    });
+  } else {
+    safeUnlink(file.path);
+  }
+
+  await prisma.aiAnalysis.create({
+    data: { ...auditBase, plateMatched: true, confidence: phaseConfidence, outcome: auditOutcome },
+  });
+
   return {
     provider: aiResult.provider,
     model: aiResult.model,
     fallbackUsed: aiResult.fallbackUsed,
+    outcome: {
+      code: outcomeCode,
+      from: order.faseActual,
+      to: finalOrder.faseActual,
+      detected: detectedPhase,
+      confidence: phaseConfidence,
+      minConfidence,
+      remainingMs: decision.remainingMs,
+      requiredMs: decision.requiredMs,
+    },
     plate: {
       detected: rawDetectedPlate,
       expected: order.vehicle.placa,
@@ -356,7 +292,7 @@ const analyzeOrderImage = async ({ orderId: rawOrderId, file, saveEvidence: rawS
     },
     phase: {
       previous: order.faseActual,
-      detected: aiResult.result.phase,
+      detected: detectedPhase,
       current: finalOrder.faseActual,
       changed,
       regression,

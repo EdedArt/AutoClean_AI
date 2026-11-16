@@ -25,7 +25,8 @@ const {
  * @param {Date|number} [options.now] - Optional current timestamp override
  * @param {Date|number} [options.lastPhaseChangeAt] - Optional last phase change timestamp override
  * @param {number} [options.durationMs] - Optional explicit duration override in ms
- * @returns {Promise<object>} The updated service order with relations (or { advanced: false, reason: 'MIN_TIME_NOT_REACHED' })
+ * @returns {Promise<object>} The updated service order with relations
+ *   (or { advanced: false, reason: 'MIN_TIME_NOT_REACHED', elapsedMs, requiredMs, remainingMs })
  */
 const changePhase = async (orderId, newPhase, options = {}) => {
   const id = Number(orderId);
@@ -72,8 +73,8 @@ const changePhase = async (orderId, newPhase, options = {}) => {
     // Automatic phase progression check: enforce 70% minimum phase duration
     // Exceptions:
     // - PENDIENTE -> REMOJO is always immediate
-    // - MANUAL (and DEMO) transitions are always immediate
-    const isAutoSource = source === 'AUTO' || source === 'SIMULATION' || source === 'AI';
+    // - MANUAL, DEMO and AI (operator-initiated photo analysis) transitions are always immediate
+    const isAutoSource = source === 'AUTO' || source === 'SIMULATION';
     const isPendienteToRemojo = currentPhase === 'PENDIENTE' && resolvedNewPhase === 'REMOJO';
 
     if (isAutoSource && currentPhase !== 'PENDIENTE' && !isPendienteToRemojo) {
@@ -113,6 +114,9 @@ const changePhase = async (orderId, newPhase, options = {}) => {
           ...order,
           advanced: false,
           reason: 'MIN_TIME_NOT_REACHED',
+          elapsedMs: tiempoEnFaseActual,
+          requiredMs: Math.round(minimoRequerido),
+          remainingMs: Math.max(0, Math.ceil(minimoRequerido - tiempoEnFaseActual)),
         };
       }
     }
