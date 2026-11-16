@@ -3,7 +3,13 @@ process.env.AI_MODE = 'simulated';
 process.env.GEMINI_API_KEY = '';
 
 const assert = require('assert');
-const { decidePhase, derivePhase } = require('../src/services/ai/phaseRules');
+const {
+  decidePhase,
+  derivePhase,
+  evaluatePhaseTransition,
+  getPhaseSequence,
+  AI_OUTCOMES,
+} = require('../src/services/ai/phaseRules');
 
 async function runPhaseRulesTests() {
   console.log('🧪 Starting Phase Decision Rules Unit Test Suite...\n');
@@ -299,6 +305,170 @@ async function runPhaseRulesTests() {
   assert.strictEqual(listoFromPolichado.phase, 'LISTO');
   assert.strictEqual(listoFromPolichado.source, 'rules');
   console.log('  ✅ POLICHADO transitions (SECADO -> POLICHADO -> LISTO) verified.\n');
+
+  // 11. evaluatePhaseTransition: explicit outcomes for AI-driven advances
+  console.log('11. Testing evaluatePhaseTransition outcomes...');
+  const MIN = 60 * 1000;
+  const longEnough = 60 * MIN; // well past 70% of any wash phase except POLICHADO
+
+  // 11a. REMOJO -> LAVADO (bug repro: foam photo with 95% confidence advances)
+  const remojoToLavado = evaluatePhaseTransition({
+    currentPhase: 'REMOJO',
+    detectedPhase: 'LAVADO',
+    confidence: 0.95,
+    minConfidence: 0.6,
+    elapsedMs: longEnough,
+  });
+  assert.strictEqual(remojoToLavado.outcome, AI_OUTCOMES.ADVANCED);
+  assert.strictEqual(remojoToLavado.from, 'REMOJO');
+  assert.strictEqual(remojoToLavado.to, 'LAVADO');
+
+  // Pipeline check: foam observations in REMOJO -> decidePhase LAVADO -> ADVANCED
+  const foamDecision = decidePhase(
+    { soapFoamVisible: true, waterOnCar: true, dryingInProgress: false, visibleDirt: 'none', cleanAndGlossy: false },
+    { currentPhase: 'REMOJO', modelPhase: 'LAVADO', modelConfidence: 0.95 }
+  );
+  const foamTransition = evaluatePhaseTransition({
+    currentPhase: 'REMOJO',
+    detectedPhase: foamDecision.phase,
+    confidence: foamDecision.confidence,
+    elapsedMs: longEnough,
+  });
+  assert.strictEqual(foamTransition.outcome, AI_OUTCOMES.ADVANCED);
+  assert.strictEqual(foamTransition.to, 'LAVADO');
+
+  // 11b. Skip REMOJO -> SECADO is allowed (operator sent the photo)
+  const skip = evaluatePhaseTransition({
+    currentPhase: 'REMOJO',
+    detectedPhase: 'SECADO',
+    confidence: 0.9,
+    elapsedMs: longEnough,
+  });
+  assert.strictEqual(skip.outcome, AI_OUTCOMES.ADVANCED);
+  assert.strictEqual(skip.to, 'SECADO');
+
+  // 11c. POLICHADO with the package -> advance; without the package -> never
+  const polichadoWith = evaluatePhaseTransition({
+    currentPhase: 'SECADO',
+    detectedPhase: 'POLICHADO',
+    confidence: 0.9,
+    incluyePolichado: true,
+    elapsedMs: longEnough,
+  });
+  assert.strictEqual(polichadoWith.outcome, AI_OUTCOMES.ADVANCED);
+  assert.strictEqual(polichadoWith.to, 'POLICHADO');
+
+  const polichadoWithout = evaluatePhaseTransition({
+    currentPhase: 'SECADO',
+    detectedPhase: 'POLICHADO',
+    confidence: 0.9,
+    incluyePolichado: false,
+    elapsedMs: longEnough,
+  });
+  assert.strictEqual(polichadoWithout.outcome, AI_OUTCOMES.PHASE_NOT_IN_PACKAGE);
+  assert.strictEqual(polichadoWithout.to, null);
+
+  const skipToPolichadoWithout = evaluatePhaseTransition({
+    currentPhase: 'REMOJO',
+    detectedPhase: 'POLICHADO',
+    confidence: 0.9,
+    incluyePolichado: false,
+    elapsedMs: longEnough,
+  });
+  assert.strictEqual(skipToPolichadoWithout.outcome, AI_OUTCOMES.PHASE_NOT_IN_PACKAGE);
+
+  assert.deepStrictEqual(getPhaseSequence(false), ['PENDIENTE', 'REMOJO', 'LAVADO', 'SECADO', 'LISTO']);
+  assert.deepStrictEqual(getPhaseSequence(true), ['PENDIENTE', 'REMOJO', 'LAVADO', 'SECADO', 'POLICHADO', 'LISTO']);
+
+  // 11d. Backward or same detection is ignored (never go backwards)
+  const backward = evaluatePhaseTransition({
+    currentPhase: 'SECADO',
+    detectedPhase: 'LAVADO',
+    confidence: 0.95,
+    elapsedMs: longEnough,
+  });
+  assert.strictEqual(backward.outcome, AI_OUTCOMES.SAME_OR_PREVIOUS_PHASE);
+  assert.strictEqual(backward.regression, true);
+  assert.strictEqual(backward.to, null);
+
+  const same = evaluatePhaseTransition({
+    currentPhase: 'LAVADO',
+    detectedPhase: 'LAVADO',
+    confidence: 0.95,
+    elapsedMs: longEnough,
+  });
+  assert.strictEqual(same.outcome, AI_OUTCOMES.SAME_OR_PREVIOUS_PHASE);
+  assert.strictEqual(same.regression, false);
+
+  // 11e. 70% rule (simulation/automatic advances, which pass elapsedMs) blocks early advances
+  //      and reports remaining time
+  // REMOJO estimate = 3 min -> 70% = 126 000 ms; after 30 s, 96 s remain
+  const blocked = evaluatePhaseTransition({
+    currentPhase: 'REMOJO',
+    detectedPhase: 'LAVADO',
+    confidence: 0.95,
+    elapsedMs: 30 * 1000,
+  });
+  assert.strictEqual(blocked.outcome, AI_OUTCOMES.BLOCKED_MIN_TIME);
+  assert.strictEqual(blocked.requiredMs, 126000);
+  assert.strictEqual(blocked.remainingMs, 96000);
+  assert.strictEqual(blocked.to, null);
+
+  const exactlyAtThreshold = evaluatePhaseTransition({
+    currentPhase: 'REMOJO',
+    detectedPhase: 'LAVADO',
+    confidence: 0.95,
+    elapsedMs: 126000,
+  });
+  assert.strictEqual(exactlyAtThreshold.outcome, AI_OUTCOMES.ADVANCED);
+
+  // AI photo path: operator-initiated, elapsedMs is not passed -> min-time not enforced (t=0 advances)
+  const aiPhotoAtZero = evaluatePhaseTransition({
+    currentPhase: 'REMOJO',
+    detectedPhase: 'LAVADO',
+    confidence: 0.95,
+  });
+  assert.strictEqual(aiPhotoAtZero.outcome, AI_OUTCOMES.ADVANCED);
+  assert.strictEqual(aiPhotoAtZero.to, 'LAVADO');
+  assert.strictEqual(aiPhotoAtZero.remainingMs, 0);
+
+  // PENDIENTE has no minimum time
+  const fromPendiente = evaluatePhaseTransition({
+    currentPhase: 'PENDIENTE',
+    detectedPhase: 'LAVADO',
+    confidence: 0.9,
+    elapsedMs: 0,
+  });
+  assert.strictEqual(fromPendiente.outcome, AI_OUTCOMES.ADVANCED);
+  assert.strictEqual(fromPendiente.to, 'LAVADO');
+
+  // 11f. Confidence threshold: >= threshold passes, < threshold is LOW_CONFIDENCE
+  const atThreshold = evaluatePhaseTransition({
+    currentPhase: 'REMOJO',
+    detectedPhase: 'LAVADO',
+    confidence: 0.6,
+    minConfidence: 0.6,
+    elapsedMs: longEnough,
+  });
+  assert.strictEqual(atThreshold.outcome, AI_OUTCOMES.ADVANCED);
+
+  const lowConf = evaluatePhaseTransition({
+    currentPhase: 'REMOJO',
+    detectedPhase: 'LAVADO',
+    confidence: 0.59,
+    minConfidence: 0.6,
+    elapsedMs: longEnough,
+  });
+  assert.strictEqual(lowConf.outcome, AI_OUTCOMES.LOW_CONFIDENCE);
+
+  const legacyPhase = evaluatePhaseTransition({
+    currentPhase: 'REMOJO',
+    detectedPhase: 'ENJABONADO',
+    confidence: 0.95,
+    elapsedMs: longEnough,
+  });
+  assert.strictEqual(legacyPhase.outcome, AI_OUTCOMES.LOW_CONFIDENCE, 'Unknown/legacy phase names must never advance');
+  console.log('  ✅ ADVANCED / skip / POLICHADO package / backward / 70% block / threshold outcomes verified.\n');
 
   console.log('🎉 ALL PHASE DECISION RULES TESTS PASSED SUCCESSFULLY!\n');
 }

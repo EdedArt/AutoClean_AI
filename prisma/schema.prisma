@@ -30,6 +30,8 @@ model Bay {
 
 model Package {
   id               Int            @id @default(autoincrement())
+  // Stable, language-neutral identifier used by clients for i18n (e.g. "BASICO")
+  codigo           String?        @unique
   nombre           String
   descripcion      String
   precio           Float?
@@ -81,7 +83,7 @@ model AiAnalysis {
   plateMatched  Boolean
   phaseDetected String?
   confidence    Float?
-  outcome       String       // "APPLIED" | "UNCHANGED" | "REGRESSION_IGNORED" | "WRONG_VEHICLE" | "PLATE_UNREADABLE" | "LOW_CONFIDENCE" | "ERROR"
+  outcome       String       // "APPLIED" | "BLOCKED_MIN_TIME" | "UNCHANGED" | "REGRESSION_IGNORED" | "PHASE_NOT_IN_PACKAGE" | "WRONG_VEHICLE" | "PLATE_UNREADABLE" | "LOW_CONFIDENCE" | "ERROR"
   fallbackUsed  Boolean
   latencyMs     Int
   createdAt     DateTime     @default(now())

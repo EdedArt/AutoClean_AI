@@ -1,4 +1,9 @@
-const { VALID_PHASES, doesOrderIncludePolichado } = require('../simulation.service');
+const {
+  VALID_PHASES,
+  MIN_PHASE_TIME_RATIO,
+  doesOrderIncludePolichado,
+  getEstimatedDurationForPhase,
+} = require('../simulation.service');
 
 // Reference valid phase names directly from VALID_PHASES to avoid redefining
 const PHASE_PENDIENTE = VALID_PHASES.find((p) => p === 'PENDIENTE') || 'PENDIENTE';
@@ -12,10 +17,10 @@ const PHASE_LISTO = VALID_PHASES.find((p) => p === 'LISTO') || 'LISTO';
  * Derives the verified wash phase from objective physical observations and order context
  * using a deterministic context-aware decision table.
  *
- * Visual key for POLICHADO vs LAVADO/ENJABONADO:
+ * Visual key for POLICHADO vs LAVADO:
  * - POLICHADO = dry car + opaque white wax/paste compound (not airy foam) +
  *   operator buffing with microfiber cloth or rotary polisher in small zones.
- * - LAVADO/ENJABONADO = wet car + airy soap foam with bubbles + running water + wide coverage.
+ * - LAVADO = wet car + airy soap foam with bubbles + running water + wide coverage.
  *
  * Transitions with POLICHADO:
  * - If currentPhase is SECADO and package includes polichado:
@@ -300,9 +305,126 @@ function decidePhase(observations, context = {}, maybeModelPhase, maybeModelConf
   };
 }
 
+/**
+ * Explicit outcomes of an AI photo analysis. Returned to the client so it can
+ * always explain what happened (never a silent "nothing changed").
+ */
+const AI_OUTCOMES = Object.freeze({
+  ADVANCED: 'ADVANCED',
+  BLOCKED_MIN_TIME: 'BLOCKED_MIN_TIME',
+  SAME_OR_PREVIOUS_PHASE: 'SAME_OR_PREVIOUS_PHASE',
+  PHASE_NOT_IN_PACKAGE: 'PHASE_NOT_IN_PACKAGE',
+  LOW_CONFIDENCE: 'LOW_CONFIDENCE',
+  PLATE_MISMATCH: 'PLATE_MISMATCH',
+  PLATE_UNREADABLE: 'PLATE_UNREADABLE',
+});
+
+/**
+ * Returns the ordered phase sequence that applies to an order, skipping
+ * POLICHADO when the package does not include it.
+ *
+ * @param {boolean} incluyePolichado
+ * @returns {string[]}
+ */
+function getPhaseSequence(incluyePolichado) {
+  return incluyePolichado ? [...VALID_PHASES] : VALID_PHASES.filter((p) => p !== PHASE_POLICHADO);
+}
+
+/**
+ * Pure decision: given the order's current phase and the phase detected by the AI,
+ * decides whether the order may advance and, if not, why.
+ *
+ * Rules:
+ * - confidence < minConfidence (or invalid detected phase) -> LOW_CONFIDENCE
+ * - POLICHADO detected but package does not include it   -> PHASE_NOT_IN_PACKAGE
+ * - detected phase is the same or earlier (never go back) -> SAME_OR_PREVIOUS_PHASE
+ * - detected phase is ahead (skips allowed) but less than 70% of the current
+ *   phase's estimated time has elapsed                      -> BLOCKED_MIN_TIME (+ remainingMs)
+ * - otherwise                                               -> ADVANCED directly to detected phase
+ * PENDIENTE has no minimum time (PENDIENTE -> anything is immediate).
+ *
+ * @param {object} params
+ * @param {string} params.currentPhase
+ * @param {string} params.detectedPhase
+ * @param {number} params.confidence
+ * @param {number} [params.minConfidence=0.6]
+ * @param {boolean} [params.incluyePolichado=false]
+ * @param {number} [params.elapsedMs] - Time spent in the current phase. If not finite, min-time is not enforced.
+ * @param {number} [params.minTimeRatio=MIN_PHASE_TIME_RATIO]
+ * @returns {{
+ *   outcome: string,
+ *   from: string,
+ *   to: string|null,
+ *   detected: string|null,
+ *   regression: boolean,
+ *   requiredMs: number,
+ *   elapsedMs: number|null,
+ *   remainingMs: number
+ * }}
+ */
+function evaluatePhaseTransition({
+  currentPhase,
+  detectedPhase,
+  confidence,
+  minConfidence = 0.6,
+  incluyePolichado = false,
+  elapsedMs,
+  minTimeRatio = MIN_PHASE_TIME_RATIO,
+}) {
+  const hasPolichado = Boolean(incluyePolichado) || currentPhase === PHASE_POLICHADO;
+  const base = {
+    from: currentPhase,
+    to: null,
+    detected: detectedPhase || null,
+    regression: false,
+    requiredMs: 0,
+    elapsedMs: Number.isFinite(elapsedMs) ? elapsedMs : null,
+    remainingMs: 0,
+  };
+
+  const conf = Number(confidence);
+  if (!Number.isFinite(conf) || conf < minConfidence || !VALID_PHASES.includes(detectedPhase)) {
+    return { ...base, outcome: AI_OUTCOMES.LOW_CONFIDENCE };
+  }
+
+  if (detectedPhase === PHASE_POLICHADO && !hasPolichado) {
+    return { ...base, outcome: AI_OUTCOMES.PHASE_NOT_IN_PACKAGE };
+  }
+
+  const sequence = getPhaseSequence(hasPolichado);
+  const currentIdx = sequence.indexOf(currentPhase);
+  const detectedIdx = sequence.indexOf(detectedPhase);
+
+  if (detectedIdx <= currentIdx) {
+    return {
+      ...base,
+      outcome: AI_OUTCOMES.SAME_OR_PREVIOUS_PHASE,
+      regression: detectedIdx < currentIdx,
+    };
+  }
+
+  if (currentPhase !== PHASE_PENDIENTE && Number.isFinite(elapsedMs)) {
+    const requiredMs = Math.round(getEstimatedDurationForPhase(currentPhase) * minTimeRatio);
+    if (elapsedMs < requiredMs) {
+      return {
+        ...base,
+        outcome: AI_OUTCOMES.BLOCKED_MIN_TIME,
+        requiredMs,
+        remainingMs: Math.max(0, Math.ceil(requiredMs - elapsedMs)),
+      };
+    }
+    return { ...base, outcome: AI_OUTCOMES.ADVANCED, to: detectedPhase, requiredMs };
+  }
+
+  return { ...base, outcome: AI_OUTCOMES.ADVANCED, to: detectedPhase };
+}
+
 module.exports = {
   decidePhase,
   derivePhase: decidePhase,
+  evaluatePhaseTransition,
+  getPhaseSequence,
+  AI_OUTCOMES,
   PHASE_PENDIENTE,
   PHASE_REMOJO,
   PHASE_LAVADO,

@@ -230,6 +230,7 @@ async function runAiAnalysisTests() {
     assert.ok(resWrong.body.error.details, 'Error details must be present');
     assert.strictEqual(resWrong.body.error.details.expected, 'EXP-202');
     assert.strictEqual(resWrong.body.error.details.detected, 'ZZZ-999');
+    assert.strictEqual(resWrong.body.error.details.outcome, 'PLATE_MISMATCH');
 
     const freshOrder2 = await prisma.serviceOrder.findUnique({ where: { id: order2.id } });
     assert.strictEqual(freshOrder2.faseActual, 'PENDIENTE');
@@ -254,6 +255,7 @@ async function runAiAnalysisTests() {
 
     assert.strictEqual(resUnreadable.status, 422);
     assert.strictEqual(resUnreadable.body.error.code, 'PLATE_UNREADABLE');
+    assert.strictEqual(resUnreadable.body.error.details.outcome, 'PLATE_UNREADABLE');
 
     const unreadableAnalysis = await prisma.aiAnalysis.findFirst({
       where: { orderId: order3.id, outcome: 'PLATE_UNREADABLE' },
@@ -275,6 +277,7 @@ async function runAiAnalysisTests() {
 
     assert.strictEqual(resLowConf.status, 200);
     assert.strictEqual(resLowConf.body.phase.changed, false);
+    assert.strictEqual(resLowConf.body.outcome.code, 'LOW_CONFIDENCE');
     assert.strictEqual(resLowConf.body.phase.current, 'PENDIENTE');
 
     const lowConfAnalysis = await prisma.aiAnalysis.findFirst({
@@ -302,6 +305,7 @@ async function runAiAnalysisTests() {
     assert.strictEqual(resReg.status, 200);
     assert.strictEqual(resReg.body.phase.changed, false);
     assert.strictEqual(resReg.body.phase.regression, true);
+    assert.strictEqual(resReg.body.outcome.code, 'SAME_OR_PREVIOUS_PHASE');
     assert.strictEqual(resReg.body.phase.current, 'LAVADO');
 
     const regAnalysis = await prisma.aiAnalysis.findFirst({
@@ -676,6 +680,141 @@ async function runAiAnalysisTests() {
     assert.strictEqual(resRegTest.body.phase.changed, false);
     assert.strictEqual(resRegTest.body.phase.regression, true);
     console.log('  ✅ Earlier phase regression safely ignored; order remained in LAVADO.');
+
+
+    // 20. Bug fix: REMOJO + foam photo (95%) advances to LAVADO and updates progress
+    console.log('\n20. Testing REMOJO + foam photo advances directly to LAVADO with explicit ADVANCED outcome...');
+    const foamProvider = (placa) => ({
+      name: 'gemini',
+      async analyzeImage() {
+        return {
+          plateDetected: placa,
+          plateConfidence: 1,
+          observations: {
+            soapFoamVisible: true,
+            waterOnCar: true,
+            dryingInProgress: false,
+            visibleDirt: 'none',
+            cleanAndGlossy: false,
+            observationNotes: 'Car fully covered in foam',
+          },
+          phase: 'LAVADO',
+          phaseConfidence: 0.95,
+          dirtLevel: null,
+          notes: 'Foam',
+        };
+      },
+    });
+
+    const { order: orderFoam } = await createTestVehicleAndOrder({
+      placa: 'FOM-386',
+      listo: true,
+      currentPhase: 'REMOJO',
+    });
+    aiService.setProvider(foamProvider('FOM-386'));
+    const mpFoam = buildMultipart();
+    const resFoam = await makeRequest('POST', `/api/orders/${orderFoam.id}/analyze`, mpFoam.buffer, {
+      ...operatorHeaders,
+      ...mpFoam.headers,
+    });
+    assert.strictEqual(resFoam.status, 200);
+    assert.strictEqual(resFoam.body.outcome.code, 'ADVANCED');
+    assert.strictEqual(resFoam.body.outcome.from, 'REMOJO');
+    assert.strictEqual(resFoam.body.outcome.to, 'LAVADO');
+    assert.strictEqual(resFoam.body.phase.changed, true);
+    assert.strictEqual(resFoam.body.order.faseActual, 'LAVADO');
+    assert.strictEqual(resFoam.body.order.porcentajeProgreso, 55);
+    console.log('  ✅ REMOJO -> LAVADO applied, progress updated to 55%.');
+
+    // 21. Photo is operator-initiated: REMOJO -> LAVADO advances immediately even at t=0
+    //     (the order entered REMOJO just now), while the SIMULATION path is still blocked before 70%.
+    console.log('\n21. Testing AI photo advances immediately at t=0; simulation still blocked before 70%...');
+    const { changePhase: changePhaseDirect } = require('../src/services/orderPhase.service');
+    const { order: orderFresh } = await createTestVehicleAndOrder({
+      placa: 'FRS-386',
+      listo: true,
+      currentPhase: 'REMOJO',
+    });
+    await prisma.serviceOrder.update({ where: { id: orderFresh.id }, data: { updatedAt: new Date() } });
+    await prisma.phaseEvent.create({
+      data: { orderId: orderFresh.id, fase: 'REMOJO', progreso: 30, source: 'MANUAL', createdAt: new Date() },
+    });
+    aiService.setProvider(foamProvider('FRS-386'));
+    const mpFresh = buildMultipart();
+    const resFresh = await makeRequest('POST', `/api/orders/${orderFresh.id}/analyze`, mpFresh.buffer, {
+      ...operatorHeaders,
+      ...mpFresh.headers,
+    });
+    aiService.setProvider(null);
+    assert.strictEqual(resFresh.status, 200);
+    assert.strictEqual(resFresh.body.outcome.code, 'ADVANCED', 'AI photo must not be subject to the 70% rule');
+    assert.strictEqual(resFresh.body.outcome.remainingMs, 0);
+    assert.strictEqual(resFresh.body.phase.changed, true);
+    assert.strictEqual(resFresh.body.order.faseActual, 'LAVADO');
+    assert.strictEqual(resFresh.body.order.porcentajeProgreso, 55);
+    const aiFreshEvent = await prisma.phaseEvent.findFirst({
+      where: { orderId: orderFresh.id, fase: 'LAVADO', source: 'AI' },
+    });
+    assert.ok(aiFreshEvent, 'PhaseEvent with source AI must be recorded for the immediate advance');
+
+    // Simulation path on a fresh REMOJO order is still blocked before 70% (BLOCKED_MIN_TIME)
+    const { order: orderSim } = await createTestVehicleAndOrder({
+      placa: 'SIM-386',
+      listo: true,
+      currentPhase: 'REMOJO',
+    });
+    const simNow = Date.now();
+    const simBlocked = await changePhaseDirect(orderSim.id, 'LAVADO', {
+      source: 'SIMULATION',
+      now: simNow,
+      lastPhaseChangeAt: simNow,
+    });
+    assert.strictEqual(simBlocked.advanced, false);
+    assert.strictEqual(simBlocked.reason, 'MIN_TIME_NOT_REACHED');
+    assert.strictEqual(simBlocked.requiredMs, 126000);
+    assert.strictEqual(simBlocked.remainingMs, 126000);
+    const simOrderAfter = await prisma.serviceOrder.findUnique({ where: { id: orderSim.id } });
+    assert.strictEqual(simOrderAfter.faseActual, 'REMOJO', 'Simulation must not advance before 70%');
+    console.log('  ✅ AI photo advanced REMOJO -> LAVADO at t=0; SIMULATION blocked before 70% (126 s remaining).');
+
+    // 22. Skip: REMOJO -> SECADO (water + drying) advances directly
+    console.log('\n22. Testing skip REMOJO -> SECADO advances directly...');
+    const { order: orderSkip } = await createTestVehicleAndOrder({
+      placa: 'SKP-222',
+      listo: true,
+      currentPhase: 'REMOJO',
+    });
+    aiService.setProvider({
+      name: 'gemini',
+      async analyzeImage() {
+        return {
+          plateDetected: 'SKP-222',
+          plateConfidence: 0.97,
+          observations: {
+            soapFoamVisible: false,
+            waterOnCar: true,
+            dryingInProgress: true,
+            visibleDirt: 'none',
+            cleanAndGlossy: false,
+            observationNotes: 'Operator drying with towels',
+          },
+          phase: 'SECADO',
+          phaseConfidence: 0.9,
+          dirtLevel: null,
+          notes: 'Drying',
+        };
+      },
+    });
+    const mpSkip = buildMultipart();
+    const resSkip = await makeRequest('POST', `/api/orders/${orderSkip.id}/analyze`, mpSkip.buffer, {
+      ...operatorHeaders,
+      ...mpSkip.headers,
+    });
+    aiService.setProvider(null);
+    assert.strictEqual(resSkip.status, 200);
+    assert.strictEqual(resSkip.body.outcome.code, 'ADVANCED');
+    assert.strictEqual(resSkip.body.order.faseActual, 'SECADO');
+    console.log('  ✅ Skip REMOJO -> SECADO applied.');
 
     console.log('\n🎉 All Phase 22 Gemini Vision & AI Analysis tests passed successfully!');
   } finally {
