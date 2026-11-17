@@ -24,9 +24,9 @@ const listVehicles = async ({ page = 1, limit = 10, search } = {}, user) => {
   if (search) {
     andConditions.push({
       OR: [
-        { placa: { contains: search } },
-        { marca: { contains: search } },
-        { modelo: { contains: search } },
+        { placa: { contains: search, mode: 'insensitive' } },
+        { marca: { contains: search, mode: 'insensitive' } },
+        { modelo: { contains: search, mode: 'insensitive' } },
       ],
     });
   }

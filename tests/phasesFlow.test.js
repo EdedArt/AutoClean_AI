@@ -10,7 +10,12 @@ process.env.JWT_SECRET = 'test-secret-at-least-32-characters-long-for-jwt-signin
 process.env.JWT_EXPIRES_IN = '1d';
 
 const { app, server, simulationInterval } = require('../server');
+// This suite drives the simulator directly (advanceOrderPhase, SIMULATION_AUTO_ADVANCE toggle).
+// Stop only the background timer so it cannot advance ready orders between a request and its
+// assertions (e.g. /ready -> ALREADY_READY, delay detection). The flag stays 'true'.
+clearInterval(simulationInterval);
 const prisma = require('../src/config/db');
+const { freshPlate, upsertFixtureBay } = require('./helpers/fixtures');
 const { getOperatorAuthHeaders, getClientAuthHeaders, ensureDemoUsers } = require('./helpers/auth');
 const {
   VALID_PHASES,
@@ -75,6 +80,7 @@ async function runPhasesFlowTests() {
   const createdOrderIds = [];
   const createdBayIds = [];
   const createdUserIds = [];
+  const createdPackageIds = [];
 
   try {
     // 0. Setup demo users and auth tokens
@@ -95,7 +101,7 @@ async function runPhasesFlowTests() {
     client2Headers = { Authorization: `Bearer ${generateToken(client2)}` };
 
     // Create a vehicle owned by Client 1
-    const testPlaca1 = `PHS-${Date.now().toString().slice(-4)}`;
+    const testPlaca1 = await freshPlate(prisma, 'PHS');
     const v1 = await prisma.vehicle.create({
       data: {
         placa: testPlaca1,
@@ -225,12 +231,11 @@ async function runPhasesFlowTests() {
     // 4. Bay lifecycle: occupies on creation and frees at LISTO
     // =========================================================================
     console.log('\n4. Testing bay lifecycle (occupies on creation, frees on LISTO)...');
-    const testBay = await prisma.bay.create({
-      data: { numero: 991, ocupada: false },
-    });
+    // Upsert: bay 991 may be left over from an earlier interrupted run
+    const testBay = await upsertFixtureBay(prisma, 991, false);
     createdBayIds.push(testBay.id);
 
-    const testPlaca2 = `PHS-${Date.now().toString().slice(-4)}B`;
+    const testPlaca2 = await freshPlate(prisma, 'PHS');
     const v2 = await prisma.vehicle.create({
       data: {
         placa: testPlaca2,
@@ -259,7 +264,7 @@ async function runPhasesFlowTests() {
 
     const vBayConflict = await prisma.vehicle.create({
       data: {
-        placa: `PHS-${Date.now().toString().slice(-4)}B`,
+        placa: await freshPlate(prisma, 'PHS'),
         marca: 'Chevrolet',
         modelo: 'Onix',
         color: 'Gris',
@@ -338,7 +343,7 @@ async function runPhasesFlowTests() {
     // 6. PhaseEvent is created per change with the right source
     // =========================================================================
     console.log('\n6. Testing PhaseEvent audit creation with correct sources...');
-    const testPlaca3 = `PHS-${Date.now().toString().slice(-4)}C`;
+    const testPlaca3 = await freshPlate(prisma, 'PHS');
     const v3 = await prisma.vehicle.create({
       data: {
         placa: testPlaca3,
@@ -437,7 +442,7 @@ async function runPhasesFlowTests() {
     // 9. Prediction delay detection skipped while PENDIENTE and unready
     // =========================================================================
     console.log('\n9. Testing prediction delay is not flagged for unready PENDIENTE orders...');
-    const testPlaca4 = `PHS-${Date.now().toString().slice(-4)}D`;
+    const testPlaca4 = await freshPlate(prisma, 'PHS');
     const v4 = await prisma.vehicle.create({
       data: {
         placa: testPlaca4,
@@ -569,15 +574,22 @@ async function runPhasesFlowTests() {
       LISTO: 100,
     });
 
-    const pkgSinPolichado = await prisma.package.findFirst({ where: { incluyePolichado: false } }) ||
-      await prisma.package.create({ data: { nombre: 'Test Básico', descripcion: 'Sin polichado', precio: 25000, duracionEstimadaMinutos: 25, incluyePolichado: false } });
-    const pkgConPolichado = await prisma.package.findFirst({ where: { incluyePolichado: true } }) ||
-      await prisma.package.create({ data: { nombre: 'Test Polichado', descripcion: 'Con polichado', precio: 45000, duracionEstimadaMinutos: 265, incluyePolichado: true } });
+    // Normally the seeded packages; the fallback rows (no codigo) are tracked and removed in teardown
+    let pkgSinPolichado = await prisma.package.findFirst({ where: { incluyePolichado: false } });
+    if (!pkgSinPolichado) {
+      pkgSinPolichado = await prisma.package.create({ data: { nombre: 'Test Básico', descripcion: 'Sin polichado', precio: 25000, incluyePolichado: false } });
+      createdPackageIds.push(pkgSinPolichado.id);
+    }
+    let pkgConPolichado = await prisma.package.findFirst({ where: { incluyePolichado: true } });
+    if (!pkgConPolichado) {
+      pkgConPolichado = await prisma.package.create({ data: { nombre: 'Test Polichado', descripcion: 'Con polichado', precio: 45000, incluyePolichado: true } });
+      createdPackageIds.push(pkgConPolichado.id);
+    }
 
     // 12a. Order WITHOUT polichado: PENDIENTE -> REMOJO -> LAVADO -> SECADO -> LISTO (10, 30, 55, 80, 100)
     const vNoPol = await prisma.vehicle.create({
       data: {
-        placa: `NPO-${Date.now().toString().slice(-3)}`,
+        placa: await freshPlate(prisma, 'NPO'),
         marca: 'Kia',
         modelo: 'Picanto',
         color: 'Blanco',
@@ -614,7 +626,7 @@ async function runPhasesFlowTests() {
     // 12b. Order WITH polichado: PENDIENTE -> REMOJO -> LAVADO -> SECADO -> POLICHADO -> LISTO (10, 25, 45, 65, 85, 100)
     const vWithPol = await prisma.vehicle.create({
       data: {
-        placa: `POL-${Date.now().toString().slice(-3)}`,
+        placa: await freshPlate(prisma, 'POL'),
         marca: 'BMW',
         modelo: 'X3',
         color: 'Negro',
@@ -655,7 +667,7 @@ async function runPhasesFlowTests() {
     console.log('\n13. Testing realistic minimum phase duration (70% rule for AUTO vs MANUAL)...');
     const vTime = await prisma.vehicle.create({
       data: {
-        placa: `TIM-${Date.now().toString().slice(-3)}`,
+        placa: await freshPlate(prisma, 'TIM'),
         marca: 'Audi',
         modelo: 'A4',
         color: 'Plata',
@@ -746,6 +758,9 @@ async function runPhasesFlowTests() {
     }
     for (const userId of createdUserIds) {
       await prisma.user.deleteMany({ where: { id: userId } });
+    }
+    if (createdPackageIds.length > 0) {
+      await prisma.package.deleteMany({ where: { id: { in: createdPackageIds } } }).catch(() => {});
     }
 
     clearInterval(simulationInterval);

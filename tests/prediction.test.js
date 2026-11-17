@@ -3,9 +3,12 @@ const assert = require('assert');
 
 process.env.PORT = '3097';
 process.env.SIMULATION_PHASE_DURATION_MS = '60000';
+// Prediction logic only: the background scheduler would advance the ready order mid-assertion
+process.env.SIMULATION_AUTO_ADVANCE = 'false';
 
 const { app, server, simulationInterval } = require('../server');
 const prisma = require('../src/config/db');
+const { freshPlate } = require('./helpers/fixtures');
 const { getOperatorAuthHeaders } = require('./helpers/auth');
 const {
   getRemainingPhasesCount,
@@ -217,7 +220,7 @@ async function runPredictionTests() {
 
   try {
     // Setup test vehicle
-    const testPlaca = `PRE-${Math.floor(100 + Math.random() * 900)}`;
+    const testPlaca = await freshPlate(prisma, 'PRE');
     const vRes = await makeRequest('POST', '/api/vehicles', {
       placa: testPlaca,
       marca: 'AITest',

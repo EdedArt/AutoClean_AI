@@ -2,6 +2,7 @@ process.env.NODE_ENV = 'test';
 process.env.SIMULATION_AUTO_ADVANCE = 'true';
 const assert = require('assert');
 const prisma = require('../src/config/db');
+const { freshPlate } = require('./helpers/fixtures');
 const {
   getNextPhase,
   getPhaseDurationMs,
@@ -87,7 +88,7 @@ async function runTests() {
 
   // Test 5: End-to-end database simulation flow
   console.log('5. Testing database order lifecycle advancement...');
-  const testPlaca = `TEST-${Date.now().toString().slice(-4)}`;
+  const testPlaca = await freshPlate(prisma, 'TST');
   const vehicle = await prisma.vehicle.create({
     data: {
       placa: testPlaca,

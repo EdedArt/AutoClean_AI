@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const prisma = require('../src/config/db');
+const { freshPlate, upsertFixtureBay, removeFixtureBay } = require('./helpers/fixtures');
 
 const vehicleRoutes = require('../src/routes/vehicle.routes');
 const serviceOrderRoutes = require('../src/routes/serviceOrder.routes');
@@ -72,6 +73,7 @@ async function runValidationTests() {
 
   const createdVehicleIds = [];
   const createdOrderIds = [];
+  let fixtureBayNumero = null;
 
   try {
     // 1. Vehicle placa validation - Invalid plate format
@@ -146,7 +148,7 @@ async function runValidationTests() {
 
     // 4. Vehicle placa normalization (lowercase to uppercase)
     console.log('\n4. Testing placa uppercase normalization...');
-    const normalizedPlaca = `val-${Math.floor(100 + Math.random() * 900)}`;
+    const normalizedPlaca = (await freshPlate(prisma, 'VAL')).toLowerCase();
     const normRes = await makeRequest('POST', '/api/vehicles', {
       placa: normalizedPlaca,
       marca: 'Toyota',
@@ -200,9 +202,9 @@ async function runValidationTests() {
     console.log('\n7. Testing bay occupancy conflict check (409)...');
     let occupiedBay = await prisma.bay.findFirst({ where: { ocupada: true } });
     if (!occupiedBay) {
-      occupiedBay = await prisma.bay.create({
-        data: { numero: 999, ocupada: true },
-      });
+      // Upsert: bay 999 may be left over (free) from an earlier run
+      occupiedBay = await upsertFixtureBay(prisma, 999, true);
+      fixtureBayNumero = 999;
     }
     const bayVehicleRes = await makeRequest('POST', '/api/vehicles', {
       placa: 'BAY-123',
@@ -306,6 +308,9 @@ async function runValidationTests() {
     }
     for (const vehicleId of createdVehicleIds) {
       await prisma.vehicle.deleteMany({ where: { id: vehicleId } });
+    }
+    if (fixtureBayNumero) {
+      await removeFixtureBay(prisma, fixtureBayNumero);
     }
     server.close();
     await prisma.$disconnect();

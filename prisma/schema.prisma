@@ -2,9 +2,12 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// PostgreSQL (Neon). DATABASE_URL = pooled connection (runtime queries),
+// DIRECT_URL = direct/unpooled connection (used by `prisma migrate`).
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model Vehicle {
@@ -19,6 +22,8 @@ model Vehicle {
   nivelSuciedad String?
   createdAt     DateTime       @default(now())
   serviceOrders ServiceOrder[]
+
+  @@index([ownerId])
 }
 
 model Bay {
@@ -59,6 +64,10 @@ model ServiceOrder {
   evidences           Evidence[]
   phaseEvents         PhaseEvent[]
   aiAnalyses          AiAnalysis[]
+
+  @@index([vehicleId, deliveredAt])
+  @@index([bayId])
+  @@index([deliveredAt, faseActual])
 }
 
 model PhaseEvent {
@@ -98,6 +107,8 @@ model Evidence {
   serviceOrderId Int
   serviceOrder   ServiceOrder @relation(fields: [serviceOrderId], references: [id])
   createdAt      DateTime     @default(now())
+
+  @@index([serviceOrderId])
 }
 
 model User {
