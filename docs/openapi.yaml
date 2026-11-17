@@ -1255,6 +1255,14 @@ components:
           enum: [Leve, Moderado, Severo]
           nullable: true
           example: Moderado
+        bodyType:
+          type: string
+          enum: [SEDAN, HATCHBACK, SUV, PICKUP, VAN]
+          nullable: true
+          description: >-
+            Set at registration from a static table of popular models, then the Gemini text model
+            (short timeout). Null if unknown or classification failed; registration never fails because of it.
+          example: SUV
         createdAt:
           type: string
           format: date-time
@@ -1946,6 +1954,8 @@ components:
         - marca
         - modelo
         - color
+        - bodyType
+        - colorHex
         - fase
         - porcentajeProgreso
         - listoParaLavar
@@ -1966,7 +1976,23 @@ components:
           example: CX-5
         color:
           type: string
+          description: Color exactly as typed at registration
           example: Rojo
+        bodyType:
+          type: string
+          enum: [SEDAN, HATCHBACK, SUV, PICKUP, VAN]
+          nullable: true
+          description: >-
+            Vehicle body type used to draw the tracking illustration. Null when it could not be
+            classified (or for vehicles registered before this field existed).
+          example: SUV
+        colorHex:
+          type: string
+          pattern: '^#[0-9A-F]{6}$'
+          description: >-
+            Display hex mapped from the free-text color (Spanish/English, accent and gender
+            insensitive). Neutral gray (#9CA3AF) when the color is not recognized.
+          example: '#C62828'
         fase:
           type: string
           enum: [PENDIENTE, REMOJO, LAVADO, SECADO, POLICHADO, LISTO]

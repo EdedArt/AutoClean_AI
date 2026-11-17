@@ -1,4 +1,6 @@
 const { computeOrderEta } = require('./eta.service');
+const { isBodyType } = require('./vehicleStyle/bodyTypes');
+const { mapColor } = require('./vehicleStyle/colorMapper');
 
 /**
  * Builds the minimal view for an active order and its vehicle.
@@ -14,6 +16,9 @@ const buildMinimalPlateView = async (vehicle, activeOrder) => {
     marca: vehicle.marca,
     modelo: vehicle.modelo,
     color: vehicle.color,
+    // Vehicle style for the tracking illustration (no owner data)
+    bodyType: isBodyType(vehicle.bodyType) ? vehicle.bodyType : null,
+    colorHex: mapColor(vehicle.color).hex,
     fase: activeOrder.faseActual,
     porcentajeProgreso: activeOrder.porcentajeProgreso,
     listoParaLavar: activeOrder.listoParaLavar,
