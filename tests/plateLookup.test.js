@@ -11,6 +11,7 @@ process.env.JWT_EXPIRES_IN = '1d';
 
 const { app, server, simulationInterval } = require('../server');
 const prisma = require('../src/config/db');
+const { freshPlate } = require('./helpers/fixtures');
 const { getOperatorAuthHeaders, getClientAuthHeaders, ensureDemoUsers } = require('./helpers/auth');
 const { recordPlateSearch } = require('../src/controllers/plate.controller');
 
@@ -113,10 +114,11 @@ async function runPlateLookupTests() {
     const rateLimitClient = await createTestClient(`ratelimit_${Date.now()}@autoclean.com`, 'Rate Limit Client', createdUserIds);
 
     // Get client1 user from DB
-    const client1User = await prisma.user.findFirst({ where: { rol: 'CLIENTE' } });
+    // Look up the demo client by email: other CLIENTE users may exist in a persistent test database
+    const client1User = await prisma.user.findUnique({ where: { email: 'cliente@autoclean.com' } });
 
     // Create a vehicle owned by Client 1 with an active order in LAVADO
-    const plate1 = `PLK-${Math.floor(100 + Math.random() * 900)}`;
+    const plate1 = await freshPlate(prisma, 'PLK');
     const vehicle1 = await prisma.vehicle.create({
       data: {
         placa: plate1,
@@ -220,7 +222,7 @@ async function runPlateLookupTests() {
     assert.strictEqual(nonExistRes.body.error.message, 'No hay un carro lavándose con esta placa');
 
     // Vehicle with no orders
-    const noOrderPlate = `PLK-${Math.floor(100 + Math.random() * 900)}`;
+    const noOrderPlate = await freshPlate(prisma, 'PLK');
     const vehicleNoOrder = await prisma.vehicle.create({
       data: {
         placa: noOrderPlate,
@@ -237,7 +239,7 @@ async function runPlateLookupTests() {
     assert.strictEqual(noOrderRes.body.error.message, 'No hay un carro lavándose con esta placa');
 
     // Vehicle with delivered order
-    const deliveredPlate = `PLK-${Math.floor(100 + Math.random() * 900)}`;
+    const deliveredPlate = await freshPlate(prisma, 'PLK');
     const vehicleDelivered = await prisma.vehicle.create({
       data: {
         placa: deliveredPlate,
@@ -266,7 +268,7 @@ async function runPlateLookupTests() {
 
     // 7. Search history is created for CLIENTE (found and not found), NOT for OPERARIO
     console.log('\n7. Testing search history creation for CLIENTE (found and not found) and NOT for OPERARIO...');
-    const opUser = await prisma.user.findFirst({ where: { rol: 'OPERARIO' } });
+    const opUser = await prisma.user.findUnique({ where: { email: 'operario@autoclean.com' } });
     await prisma.searchedPlate.deleteMany({ where: { userId: opUser.id } });
 
     // notFoundClient searched noOrderPlate (found vehicle, no order) and nonexistentPlate (not found)
@@ -414,6 +416,14 @@ async function runPlateLookupTests() {
 
     console.log('\n🎉 ALL PLATE STATUS LOOKUP, SEARCH HISTORY & PRIVACY TESTS PASSED!');
   } finally {
+    // Search-history rows recorded for the shared demo users on plates this suite created
+    const createdPlates = await prisma.vehicle
+      .findMany({ where: { id: { in: createdVehicleIds } }, select: { placa: true } })
+      .then((rows) => rows.map((r) => r.placa))
+      .catch(() => []);
+    if (createdPlates.length > 0) {
+      await prisma.searchedPlate.deleteMany({ where: { placa: { in: createdPlates } } }).catch(() => {});
+    }
     // Cleanup created records
     for (const orderId of createdOrderIds) {
       await prisma.evidence.deleteMany({ where: { serviceOrderId: orderId } }).catch(() => {});

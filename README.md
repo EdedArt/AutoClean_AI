@@ -51,7 +51,7 @@ AutoClean AI is designed for commercial car wash facilities and their clients:
    ```bash
    cp .env.example .env
    ```
-   *Edit `.env` if you wish to configure a real `GEMINI_API_KEY` or custom port. Default settings use local SQLite (`dev.db`), simulated AI provider (`AI_MODE=simulated`), and port 3000.*
+   *Edit `.env` if you wish to configure a real `GEMINI_API_KEY` or custom port. Set `DATABASE_URL` / `DIRECT_URL` to a PostgreSQL database (e.g. a Neon dev branch; see `DEPLOY.md`). Defaults: simulated AI provider (`AI_MODE=simulated`), and port 3000.*
 
 4. **Run database migrations:**
    ```bash
@@ -85,7 +85,9 @@ All variables are validated at server startup using Zod schemas (`src/config/env
 
 | Variable | Type | Default | Description |
 |---|---|---|---|
-| `DATABASE_URL` | String | *Required* (`file:./dev.db`) | SQLite database file connection string for Prisma. |
+| `DATABASE_URL` | String | *Required* | PostgreSQL connection string (Neon **pooled** URL, `sslmode=require`) used at runtime. |
+| `DIRECT_URL` | String | *Required* | Direct (unpooled) PostgreSQL URL to the same database, used by `prisma migrate`. |
+| `TEST_DATABASE_URL` | String | *Required for `npm test`* | Separate PostgreSQL database for tests (e.g. a Neon `test` branch). Must differ from `DATABASE_URL`. |
 | `PORT` | Integer | `3000` | HTTP listening port for the Express application. |
 | `NODE_ENV` | String | `development` | Environment mode: `development`, `test`, or `production`. |
 | `JWT_SECRET` | String | *Required* (min 32 chars) | Secret key used to sign and verify JSON Web Tokens. |

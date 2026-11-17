@@ -7,6 +7,7 @@ process.env.PORT = '3099';
 
 const { app, server, simulationInterval } = require('../server');
 const prisma = require('../src/config/db');
+const { freshPlate } = require('./helpers/fixtures');
 const { getOperatorAuthHeaders } = require('./helpers/auth');
 
 let authHeaders = {};
@@ -58,7 +59,7 @@ async function runIntegrationTest() {
 
   authHeaders = await getOperatorAuthHeaders(prisma);
 
-  const testPlaca = `SIM-${Math.floor(100 + Math.random() * 900)}`;
+  const testPlaca = await freshPlate(prisma, 'SIM');
 
   // 1. Create a vehicle
   const vRes = await makeRequest('POST', '/api/vehicles', {

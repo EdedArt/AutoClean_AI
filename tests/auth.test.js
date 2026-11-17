@@ -2,6 +2,7 @@ const http = require('http');
 const assert = require('assert');
 const jwt = require('jsonwebtoken');
 const prisma = require('../src/config/db');
+const { freshPlate } = require('./helpers/fixtures');
 const env = require('../src/config/env');
 const {
   ensureDemoUsers,
@@ -64,6 +65,9 @@ function makeRequest(method, reqPath, body = null, headers = {}) {
 async function runAuthTests() {
   console.log('🧪 Starting JWT Authentication & Role-Based Authorization Test Suite...\n');
 
+  const uniqueEmail = `test-client-${Date.now()}@example.com`;
+  const createdVehicleIds = [];
+
   try {
     // 0. Ensure demo users exist
     await ensureDemoUsers(prisma);
@@ -85,7 +89,6 @@ async function runAuthTests() {
     // 2. User Registration (POST /api/auth/register)
     // =======================================================================
     console.log('\n2. Testing registration always assigns role CLIENTE...');
-    const uniqueEmail = `test-client-${Date.now()}@example.com`;
     const regPayload = {
       nombre: 'Cliente Prueba',
       email: uniqueEmail,
@@ -278,7 +281,7 @@ async function runAuthTests() {
       'POST',
       '/api/vehicles',
       {
-        placa: `OPE-${Math.floor(100 + Math.random() * 900)}`,
+        placa: await freshPlate(prisma, 'OPE'),
         marca: 'Ford',
         modelo: 'Focus',
         color: 'Blanco',
@@ -288,6 +291,7 @@ async function runAuthTests() {
       operatorHeaders
     );
     assert.strictEqual(createVehOperator.status, 201);
+    createdVehicleIds.push(createVehOperator.body.id);
     console.log('  ✅ OPERARIO receives 201 Created on POST /api/vehicles');
 
     // Both roles allowed: GET /api/vehicles
@@ -301,11 +305,11 @@ async function runAuthTests() {
     assert.strictEqual(noTokenRes.body.error.code, 'UNAUTHORIZED');
     console.log('  ✅ Protected route without token returns 401 UNAUTHORIZED');
 
-    // Cleanup created test user
-    await prisma.user.deleteMany({ where: { email: uniqueEmail.toLowerCase() } });
-
     console.log('\n🎉 ALL JWT AUTHENTICATION & ROLE AUTHORIZATION TESTS PASSED!\n');
   } finally {
+    // Cleanup runs even when an assertion fails, so nothing leaks into the next run
+    await prisma.vehicle.deleteMany({ where: { id: { in: createdVehicleIds } } }).catch(() => {});
+    await prisma.user.deleteMany({ where: { email: uniqueEmail.toLowerCase() } }).catch(() => {});
     if (simulationInterval) clearInterval(simulationInterval);
     if (server) server.close();
     await prisma.$disconnect();

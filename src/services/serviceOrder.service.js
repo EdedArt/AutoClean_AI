@@ -43,7 +43,7 @@ const listServiceOrders = async (
   if (placa) {
     andConditions.push({
       vehicle: {
-        placa: { contains: placa },
+        placa: { contains: placa, mode: 'insensitive' },
       },
     });
   }

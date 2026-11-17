@@ -6,6 +6,7 @@ process.env.SIMULATION_PHASE_DURATION_MS = '60000';
 
 const { app, server, simulationInterval } = require('../server');
 const prisma = require('../src/config/db');
+const { freshPlate } = require('./helpers/fixtures');
 const { getOperatorAuthHeaders } = require('./helpers/auth');
 
 let authHeaders = {};
@@ -53,7 +54,7 @@ async function runDemoControlTests() {
 
   authHeaders = await getOperatorAuthHeaders(prisma);
 
-  const testPlaca = `DEM-${Math.floor(100 + Math.random() * 900)}`;
+  const testPlaca = await freshPlate(prisma, 'DEM');
 
   // 1. Setup vehicle and order
   const vRes = await makeRequest('POST', '/api/vehicles', {

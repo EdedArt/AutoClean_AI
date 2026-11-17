@@ -11,7 +11,12 @@ services:
         value: production
       - key: PORT
         value: 10000
+      # PostgreSQL (Neon) — set both values in the Render dashboard (never in this file).
+      # DATABASE_URL: pooled connection (host contains "-pooler"), used at runtime.
       - key: DATABASE_URL
+        sync: false
+      # DIRECT_URL: direct/unpooled connection, used by `prisma migrate deploy` in startCommand.
+      - key: DIRECT_URL
         sync: false
       - key: JWT_SECRET
         sync: false

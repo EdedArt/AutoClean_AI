@@ -1,7 +1,4 @@
-const { PrismaClient } = require('@prisma/client');
 const bcrypt = require('bcryptjs');
-
-const defaultPrisma = new PrismaClient();
 
 /**
  * Idempotently seeds the database with initial demo users, wash bays, and wash packages.
@@ -11,7 +8,8 @@ const defaultPrisma = new PrismaClient();
  * @param {import('@prisma/client').PrismaClient} [prismaClient]
  */
 async function seedDatabase(prismaClient) {
-  const prisma = prismaClient || defaultPrisma;
+  // Shared client: same PostgreSQL connection settings and test-database guard as the app
+  const prisma = prismaClient || require('../src/config/db');
   const shouldDisconnect = !prismaClient;
 
   try {
@@ -56,7 +54,7 @@ async function seedDatabase(prismaClient) {
       });
     }
 
-    // 3. Seed Wash Packages - create or update incluyePolichado flag
+    // 3. Seed Wash Packages - upsert by the stable, unique `codigo`
     const packagesToSeed = [
       {
         codigo: 'BASICO',
@@ -75,19 +73,19 @@ async function seedDatabase(prismaClient) {
     ];
 
     for (const pkg of packagesToSeed) {
-      const existing = await prisma.package.findFirst({
-        where: { OR: [{ codigo: pkg.codigo }, { nombre: pkg.nombre }] },
+      // Claim a legacy row created before `codigo` existed (same name, no code) so the
+      // upsert below updates it instead of creating a duplicate. No-op once claimed.
+      await prisma.package.updateMany({
+        where: { codigo: null, nombre: pkg.nombre },
+        data: { codigo: pkg.codigo },
       });
-      if (!existing) {
-        await prisma.package.create({
-          data: pkg,
-        });
-      } else {
-        await prisma.package.update({
-          where: { id: existing.id },
-          data: { codigo: pkg.codigo, incluyePolichado: pkg.incluyePolichado },
-        });
-      }
+
+      // Never overwrite name/description/price on restarts; only keep the polichado flag in sync.
+      await prisma.package.upsert({
+        where: { codigo: pkg.codigo },
+        update: { incluyePolichado: pkg.incluyePolichado },
+        create: pkg,
+      });
     }
 
     console.log('👤 Demo accounts ensured: operario@autoclean.com, cliente@autoclean.com');

@@ -10,6 +10,7 @@ const vehicleRoutes = require('../src/routes/vehicle.routes');
 const serviceOrderRoutes = require('../src/routes/serviceOrder.routes');
 const evidenceRoutes = require('../src/routes/evidence.routes');
 const prisma = require('../src/config/db');
+const { freshPlate, upsertFixtureBay, removeFixtureBay } = require('./helpers/fixtures');
 const { getOperatorAuthHeaders } = require('./helpers/auth');
 
 const TEST_PORT = 3095;
@@ -87,10 +88,11 @@ async function runErrorHandlingTests() {
   let testVehicle;
   let testOrder;
   let bayTestVehicle;
+  let fixtureBayNumero = null;
 
   try {
     // Setup test vehicle and order for tests
-    const plate = `ERR-${Math.floor(100 + Math.random() * 900)}`;
+    const plate = await freshPlate(prisma, 'ERR');
     testVehicle = await prisma.vehicle.create({
       data: {
         placa: plate,
@@ -191,9 +193,11 @@ async function runErrorHandlingTests() {
     console.log('\n6. Testing occupied bay assignment returns 409 BAY_OCCUPIED...');
     let occupiedBay = await prisma.bay.findFirst({ where: { ocupada: true } });
     if (!occupiedBay) {
-      occupiedBay = await prisma.bay.create({ data: { numero: 988, ocupada: true } });
+      // Upsert: bay 988 may be left over (free) from an earlier run
+      occupiedBay = await upsertFixtureBay(prisma, 988, true);
+      fixtureBayNumero = 988;
     }
-    const bayPlate = `BAY-${Math.floor(100 + Math.random() * 900)}`;
+    const bayPlate = await freshPlate(prisma, 'BAY');
     bayTestVehicle = await prisma.vehicle.create({
       data: {
         placa: bayPlate,
@@ -277,6 +281,9 @@ async function runErrorHandlingTests() {
     }
     if (bayTestVehicle) {
       await prisma.vehicle.delete({ where: { id: bayTestVehicle.id } }).catch(() => {});
+    }
+    if (fixtureBayNumero) {
+      await removeFixtureBay(prisma, fixtureBayNumero);
     }
     server.close();
     await prisma.$disconnect();

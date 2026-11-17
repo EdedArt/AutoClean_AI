@@ -14,6 +14,7 @@ process.env.JWT_EXPIRES_IN = '1d';
 
 const { app, server, simulationInterval } = require('../server');
 const prisma = require('../src/config/db');
+const { freshPlate } = require('./helpers/fixtures');
 const { getOperatorAuthHeaders, getClientAuthHeaders, ensureDemoUsers } = require('./helpers/auth');
 const {
   formatEtaDuration,
@@ -275,7 +276,7 @@ async function runDeliveryTests() {
   const createdOrderIds = [];
 
   try {
-    const testPlaca1 = `DLV-${Math.floor(100 + Math.random() * 900)}`;
+    const testPlaca1 = await freshPlate(prisma, 'DLV');
     const v1 = await prisma.vehicle.create({
       data: {
         placa: testPlaca1,
@@ -384,7 +385,7 @@ async function runDeliveryTests() {
 
     // 14b. Concurrent delivery with Promise.all (race condition safety)
     console.log('\n14b. Testing concurrent delivery calls (Promise.all race condition safety)...');
-    const testPlacaConcurrent = `CNC-${Math.floor(100 + Math.random() * 900)}`;
+    const testPlacaConcurrent = await freshPlate(prisma, 'CNC');
     const vConcurrent = await prisma.vehicle.create({
       data: {
         placa: testPlacaConcurrent,
@@ -474,7 +475,7 @@ async function runDeliveryTests() {
     // 19. A CLIENTE tracking someone else's plate gets the identical 404
     console.log('\n19. Testing CLIENTE tracking someone else\'s plate returns identical 404...');
     // Create an active order for Client 1
-    const testPlaca2 = `CIV-${Math.floor(100 + Math.random() * 900)}`;
+    const testPlaca2 = await freshPlate(prisma, 'CIV');
     const v2 = await prisma.vehicle.create({
       data: {
         placa: testPlaca2,

@@ -6,3 +6,4 @@ prisma/dev.db-journal
 *.db-journal
 *.log
 storage/
+prisma/legacy-sqlite-migrations/

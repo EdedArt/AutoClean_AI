@@ -8,6 +8,7 @@ process.env.JWT_EXPIRES_IN = '1d';
 
 const { app, server, simulationInterval } = require('../server');
 const prisma = require('../src/config/db');
+const { freshPlate } = require('./helpers/fixtures');
 const { getOperatorAuthHeaders, getClientAuthHeaders } = require('./helpers/auth');
 
 function makeRequest(method, reqPath, body = null, headers = {}) {
@@ -61,6 +62,7 @@ async function runOwnershipTests() {
 
   const createdVehicleIds = [];
   const createdOrderIds = [];
+  const client2Email = `client2_${Date.now()}@autoclean.com`;
 
   try {
     // 0. Setup authentication for operator and client1
@@ -69,7 +71,6 @@ async function runOwnershipTests() {
     client1Headers = await getClientAuthHeaders(prisma);
 
     // Register a second client user through public self-registration
-    const client2Email = `client2_${Date.now()}@autoclean.com`;
     const regRes = await makeRequest('POST', '/api/auth/register', {
       nombre: 'Cliente Dos',
       email: client2Email,
@@ -89,7 +90,7 @@ async function runOwnershipTests() {
 
     // 1. Vehicle creation with color, ownerName, ownerEmail and omitting nivelSuciedad
     console.log('\n1. Testing vehicle creation with color, ownerName, ownerEmail (omitting nivelSuciedad)...');
-    const plate1 = `OWN-${Math.floor(100 + Math.random() * 900)}`;
+    const plate1 = await freshPlate(prisma, 'OWN');
     const createVehRes = await makeRequest(
       'POST',
       '/api/vehicles',
@@ -415,6 +416,8 @@ async function runOwnershipTests() {
     for (const vehicleId of createdVehicleIds) {
       await prisma.vehicle.deleteMany({ where: { id: vehicleId } });
     }
+    // Self-registered client2 (its SearchedPlate rows cascade)
+    await prisma.user.deleteMany({ where: { email: client2Email.toLowerCase() } }).catch(() => {});
 
     if (simulationInterval) {
       clearInterval(simulationInterval);

@@ -6,6 +6,7 @@ process.env.SIMULATION_PHASE_DURATION_MS = '60000';
 
 const { app, server, simulationInterval } = require('../server');
 const prisma = require('../src/config/db');
+const { freshPlate } = require('./helpers/fixtures');
 const { getOperatorAuthHeaders } = require('./helpers/auth');
 
 let authHeaders = {};
@@ -60,7 +61,7 @@ async function runSearchFiltersTests() {
     console.log('1. Setting up test data for search and filter tests...');
     const v1 = await prisma.vehicle.create({
       data: {
-        placa: `MAZ-${Math.floor(100 + Math.random() * 899)}`,
+        placa: await freshPlate(prisma, 'MAZ'),
         marca: 'Mazda',
         modelo: 'CX-5',
         nivelSuciedad: 'Moderado',
@@ -70,7 +71,7 @@ async function runSearchFiltersTests() {
 
     const v2 = await prisma.vehicle.create({
       data: {
-        placa: `TOY-${Math.floor(100 + Math.random() * 899)}`,
+        placa: await freshPlate(prisma, 'TOY'),
         marca: 'Toyota',
         modelo: 'Corolla Cross',
         nivelSuciedad: 'Severo',

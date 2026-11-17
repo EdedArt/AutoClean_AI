@@ -6,6 +6,8 @@ const path = require('path');
 process.env.NODE_ENV = 'test';
 process.env.PORT = '3094';
 process.env.SIMULATION_PHASE_DURATION_MS = '60000';
+// AI-driven transitions only: the background scheduler would race these assertions
+process.env.SIMULATION_AUTO_ADVANCE = 'false';
 process.env.JWT_SECRET = 'test-secret-at-least-32-characters-long-for-jwt-signing';
 process.env.JWT_EXPIRES_IN = '1d';
 process.env.AI_MODE = 'simulated';
@@ -13,6 +15,7 @@ process.env.GEMINI_API_KEY = '';
 
 const { app, server, simulationInterval } = require('../server');
 const prisma = require('../src/config/db');
+const { purgeVehiclesByPlate } = require('./helpers/fixtures');
 const { getOperatorAuthHeaders, getClientAuthHeaders, ensureDemoUsers } = require('./helpers/auth');
 const aiService = require('../src/services/ai');
 const simulatedProvider = require('../src/services/ai/simulatedProvider');
@@ -107,6 +110,8 @@ async function runAiAnalysisTests() {
 
     // Helper to create a fresh vehicle and ready order
     async function createTestVehicleAndOrder({ placa = 'AIX-101', listo = true, currentPhase = 'PENDIENTE', nivelSuciedad = null, bayId = null } = {}) {
+      // Fixed plates: remove a leftover from an earlier interrupted run before re-creating it
+      await purgeVehiclesByPlate(prisma, placa);
       const v = await prisma.vehicle.create({
         data: {
           placa,
@@ -511,7 +516,7 @@ async function runAiAnalysisTests() {
         {
           PORT: 3000,
           NODE_ENV: 'test',
-          DATABASE_URL: 'file:./dev.db',
+          DATABASE_URL: 'postgresql://user:password@localhost:5432/autoclean_test',
           JWT_SECRET: 'super-secret-key-at-least-32-chars-long',
           AI_MODE: 'gemini',
           GEMINI_API_KEY: '',
