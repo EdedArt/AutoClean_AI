@@ -20,6 +20,8 @@ model Vehicle {
   ownerId       Int?
   owner         User?          @relation("UserVehicles", fields: [ownerId], references: [id])
   nivelSuciedad String?
+  // SEDAN | HATCHBACK | SUV | PICKUP | VAN; null when unknown (incl. rows registered before this column)
+  bodyType      String?
   createdAt     DateTime       @default(now())
   serviceOrders ServiceOrder[]
 

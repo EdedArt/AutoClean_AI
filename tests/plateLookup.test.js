@@ -54,8 +54,12 @@ function makeRequest(method, reqPath, body = null, headers = {}) {
   });
 }
 
+// Exact public field list. Deliberately extended with bodyType + colorHex (vehicle style for the
+// tracking illustration); anything about the owner, bay, evidence or AI must never appear here.
 const ALLOWED_MINIMAL_KEYS = [
+  'bodyType',
   'color',
+  'colorHex',
   'estimatedReadyAt',
   'etaLabel',
   'etaMinutes',
@@ -161,6 +165,9 @@ async function runPlateLookupTests() {
     assert.strictEqual(client2Lookup.body.marca, 'Toyota');
     assert.strictEqual(client2Lookup.body.modelo, 'Corolla Cross');
     assert.strictEqual(client2Lookup.body.color, 'Azul');
+    // Fixture row created without bodyType (like vehicles registered before the column): stays null
+    assert.strictEqual(client2Lookup.body.bodyType, null);
+    assert.strictEqual(client2Lookup.body.colorHex, '#1E5BB8');
     assert.strictEqual(client2Lookup.body.fase, 'LAVADO');
     assert.strictEqual(client2Lookup.body.porcentajeProgreso, 60);
     assert.strictEqual(client2Lookup.body.listoParaLavar, true);
@@ -340,6 +347,7 @@ async function runPlateLookupTests() {
     assert.strictEqual(activeEntry.status.placa, plate1);
     assert.strictEqual(activeEntry.status.fase, 'LAVADO');
     assert.strictEqual(activeEntry.status.marca, 'Toyota');
+    assert.deepStrictEqual(Object.keys(activeEntry.status).sort(), ALLOWED_MINIMAL_KEYS);
     assert.strictEqual(activeEntry.message, undefined);
 
     const inactiveEntry = mePlatesRes.body.data.find((e) => e.placa === nonexistentPlate);

@@ -81,6 +81,11 @@ const envSchema = z.object({
     .int()
     .positive()
     .default(20000),
+  VEHICLE_CLASSIFIER_TIMEOUT_MS: z.coerce
+    .number({ invalid_type_error: 'VEHICLE_CLASSIFIER_TIMEOUT_MS must be an integer' })
+    .int()
+    .positive()
+    .default(3000),
   RATE_LIMIT_AI_MAX: z.coerce
     .number({ invalid_type_error: 'RATE_LIMIT_AI_MAX must be an integer' })
     .int()
@@ -215,6 +220,11 @@ const env = {
   },
   get GEMINI_TIMEOUT_MS() {
     return process.env.GEMINI_TIMEOUT_MS !== undefined ? parseInt(process.env.GEMINI_TIMEOUT_MS, 10) : parsed.GEMINI_TIMEOUT_MS;
+  },
+  get VEHICLE_CLASSIFIER_TIMEOUT_MS() {
+    return process.env.VEHICLE_CLASSIFIER_TIMEOUT_MS !== undefined
+      ? parseInt(process.env.VEHICLE_CLASSIFIER_TIMEOUT_MS, 10)
+      : parsed.VEHICLE_CLASSIFIER_TIMEOUT_MS;
   },
   get RATE_LIMIT_AI_MAX() {
     return process.env.RATE_LIMIT_AI_MAX !== undefined ? parseInt(process.env.RATE_LIMIT_AI_MAX, 10) : parsed.RATE_LIMIT_AI_MAX;

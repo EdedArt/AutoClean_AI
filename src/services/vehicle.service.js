@@ -2,6 +2,7 @@ const prisma = require('../config/db');
 const AppError = require('../utils/AppError');
 const { getPrismaPagination, buildPaginatedResponse } = require('../utils/pagination');
 const { getVehicleOwnershipFilter, checkVehicleAccess } = require('../utils/ownership');
+const { classifyBodyType } = require('./vehicleStyle/bodyTypeClassifier');
 
 /**
  * Fetch all vehicles with search, pagination and role-based ownership filtering
@@ -89,6 +90,9 @@ const createVehicle = async ({ placa, marca, modelo, color, ownerName, ownerEmai
     ownerId = ownerUser.id;
   }
 
+  // Never throws: catalog lookup, then AI with a hard timeout, otherwise null.
+  const { bodyType } = await classifyBodyType(marca, modelo);
+
   return await prisma.vehicle.create({
     data: {
       placa,
@@ -98,6 +102,7 @@ const createVehicle = async ({ placa, marca, modelo, color, ownerName, ownerEmai
       ownerName,
       ownerId,
       nivelSuciedad: nivelSuciedad || null,
+      bodyType,
     },
   });
 };
